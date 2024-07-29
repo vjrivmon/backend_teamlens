@@ -18,6 +18,34 @@ usersRouter.get("/", async (_req: Request, res: Response) => {
     }
 });
 
+usersRouter.post("/clear-notifications", async (req: Request, res: Response) => {
+
+    const authUserId = req.session?.authuser as string;
+
+    try {
+        const user = await collections.users?.updateOne({ _id: new ObjectId(authUserId) }, {
+            $unset: {
+                notifications: 1
+            }
+        });
+
+        if (!user) {
+            res.status(404).send(`User with id ${authUserId} does not exist`);
+            return
+        }
+
+        res.status(200).send({
+            message: `Successfully cleared notifications for user with id ${authUserId}`
+        });
+
+
+    } catch (error: any) {
+        console.error(error.message);
+        res.status(400).send(error.message);
+    }
+
+});
+
 usersRouter.get("/:id", async (req: Request, res: Response) => {
 
     const id = req?.params?.id;
@@ -28,6 +56,7 @@ usersRouter.get("/:id", async (req: Request, res: Response) => {
 
         if (user) {
             res.status(200).send(user);
+            return
         }
 
     } catch (error) {
@@ -35,23 +64,25 @@ usersRouter.get("/:id", async (req: Request, res: Response) => {
     }
 });
 
-usersRouter.post("/", async (req: Request, res: Response) => {
-    try {
+// this is same as the register auth route
+// usersRouter.post("/", async (req: Request, res: Response) => {
+//     try {
 
-        const newUser = req.body as User;
+//         const newUser = req.body as User;
 
-        const result = await collections.users?.insertOne(newUser);
+//         const result = await collections.users?.insertOne(newUser);
 
-        result
-            ? res.status(201).send(`Successfully created a new user with id ${result.insertedId}`)
-            : res.status(500).send("Failed to create a new user.");
-    } catch (error: any) {
-        console.error(error);
-        res.status(400).send(error.message);
-    }
-});
+//         result
+//             ? res.status(201).send(`Successfully created a new user with id ${result.insertedId}`)
+//             : res.status(500).send("Failed to create a new user.");
+//     } catch (error: any) {
+//         console.error(error);
+//         res.status(400).send(error.message);
+//     }
+// });
 
 usersRouter.put("/:id", async (req: Request, res: Response) => {
+
     const id = req?.params?.id;
 
     try {
@@ -61,7 +92,7 @@ usersRouter.put("/:id", async (req: Request, res: Response) => {
         const result = await collections.users?.updateOne(query, { $set: updatedUser });
 
         result
-            ? res.status(200).send(`Successfully updated user with id ${id}`)
+            ? res.status(202).send(`Successfully updated user with id ${id}`)
             : res.status(304).send(`User with id: ${id} not updated`);
     } catch (error: any) {
         console.error(error.message);
@@ -89,40 +120,41 @@ usersRouter.delete("/:id", async (req: Request, res: Response) => {
     }
 });
 
-
 usersRouter.get("/:id/activities", async (req: Request, res: Response) => {
 
     const { id } = req?.params;
 
     try {
         const user = await collections.users?.findOne<User>({ _id: new ObjectId(id) });
-        const activities = await collections.activities?.find<Activity[]>({ $in: { _id: user?.activities } }).toArray();
 
-        if (user) {
-            res.status(200).send(activities);
-        } else {
+        if (!user) {
             res.status(404).send(`User with id ${id} does not exist`);
+            return;
         }
+
+        const activities = await collections.activities?.find<Activity[]>({ _id: { $in: user?.activities ?? [] } }).toArray();
+        return res.status(200).send(activities);
 
     } catch (error: any) {
         console.error(error.message);
-        res.status(400).send(error.message);
+        return res.status(400).send(error.message);
     }
 });
 
-usersRouter.get("/:id/group", async (req: Request, res: Response) => {
+usersRouter.get("/:id/groups", async (req: Request, res: Response) => {
 
     const { id } = req?.params;
 
     try {
         const user = await collections.users?.findOne<User>({ _id: new ObjectId(id) });
-        const groups = await collections.groups?.find<Group[]>({ $in: { _id: user?.groups } }).toArray();
 
-        if (user) {
-            res.status(200).send(groups);
-        } else {
+        if (!user) {
             res.status(404).send(`User with id ${id} does not exist`);
+            return
         }
+
+        const groups = await collections.groups?.find<Group[]>({ _id: { $in: user?.groups ?? [] } }).toArray();
+        res.status(200).send(groups);
 
     } catch (error: any) {
         console.error(error.message);
@@ -160,7 +192,7 @@ usersRouter.post("/:id/send-questionnaire/:questionnaireId", async (req: Request
     console.log(answers);
 
     // se espera un objecto con las respuestas del cuestionario
-    
+
     // logica de negocio: calcular el resultado del cuestionario y guardarlo en la base de datos askedQuestionnaires: { questionnaireId, result }
     const questionnaireResult = "LIDER"; // mock
 
@@ -197,3 +229,4 @@ usersRouter.post("/:id/send-questionnaire/:questionnaireId", async (req: Request
         res.status(400).send(error.message);
     }
 });
+

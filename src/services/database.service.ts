@@ -29,8 +29,7 @@ export async function connectToDatabase() {
 
     collections.users = usersCollection;
     collections.activities = activitiesCollection;
-    collections.groups = groupsCollection;
-    
+    collections.groups = groupsCollection;    
     collections.questionnaires = questionnairesCollection;
 
     console.log(`MongoDB: Successfully connected to database: ${db.databaseName}`);

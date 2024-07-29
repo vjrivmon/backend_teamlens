@@ -5,7 +5,8 @@ export default class Questionnaire {
         public title: string,
         public description: string,
         public questions: Question[],
-        public id?: ObjectId
+        public questionnaireType: string,
+        public _id?: ObjectId
     ) { }
 }
 

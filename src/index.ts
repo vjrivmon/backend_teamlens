@@ -1,11 +1,12 @@
 import express from 'express';
 
-import { cookieSessionMiddleware, corsMiddleware, headersMiddleware } from './middlewares'
+import { cookieSessionMiddleware, corsMiddleware, headersMiddleware, verifyToken as _vt, verifyToken } from './middlewares'
 
 import { connectToDatabase } from "./services/database.service"
 import { usersRouter } from "./routes/user.router";
 import { activitiesRouter } from "./routes/activity.router";
 import { questionnairesRouter } from './routes/questionnaires.router';
+import { authRouter } from './routes/auth.router';
 
 const app = express();
 const PORT = 3000;
@@ -26,9 +27,10 @@ app.get('/health', (_req, res) => {
 connectToDatabase()
     .then(() => {
         
-        app.use("/users", usersRouter);
-        app.use("/activities", activitiesRouter);
-        app.use("/questionnaires", questionnairesRouter);
+        app.use("/users", verifyToken, usersRouter);
+        app.use("/activities", verifyToken, activitiesRouter);
+        app.use("/questionnaires", verifyToken, questionnairesRouter);
+        app.use("/auth", authRouter);
 
         app.listen(PORT, () => {
             console.log(`Server started at http://localhost:${PORT}`);

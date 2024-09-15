@@ -1,5 +1,5 @@
 
-# TeamLens. Backend repository.
+# Teamlens. Backend repository.
 
 This document provides an overview of the backend's project structure: key files, models, services, middlewares, routes, environment variables, scripts, and dependencies. The project is a Node.js application using TypeScript, Express, and MongoDB. It includes various models, routes, and services to manage users, activities, groups, and questionnaires.
 

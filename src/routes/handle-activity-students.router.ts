@@ -52,7 +52,7 @@ handleActivityStudentsRouter.post("/", async (req: Request, res: Response) => {
 
         //logica de negocio: si el usuario no existe se crea una cuenta temporal con su email, se le envia un correo para que se registre y se le añade a la actividad     
         const temporalUsersEmail: string[] = []
-        
+
         for (let index = 0; index < emails.length; index++) {
             const email = emails[index];
             if (!existingUserEmails.includes(email)) {
@@ -60,7 +60,7 @@ handleActivityStudentsRouter.post("/", async (req: Request, res: Response) => {
                 //crear cuenta temporal
                 const temporalUserId = await createNonRegisteredAccount(email);
                 if (temporalUserId) {
-                    existingUserIds.push(temporalUserId);                    
+                    existingUserIds.push(temporalUserId);
                     console.log("Users ID added: ", existingUserIds)
                 }
             }
@@ -75,7 +75,7 @@ handleActivityStudentsRouter.post("/", async (req: Request, res: Response) => {
         await collections.users?.updateMany({ _id: { $in: existingUserIds } }, {
             $addToSet: { activities: new ObjectId(activityId) }
         });
-        
+
         existingUserIds.forEach(async (id) => {
             await addUserNotification(id, {
                 title: "Activity",
@@ -83,7 +83,7 @@ handleActivityStudentsRouter.post("/", async (req: Request, res: Response) => {
                 link: `/activities/${activityId}`
             })
         });
-        
+
 
         if (result && result.modifiedCount) {
             res.status(200).send({
@@ -111,17 +111,39 @@ handleActivityStudentsRouter.delete("/:studentId", async (_req: Request, _res: R
 
     try {
 
-        const resultSubstract = await collections.activities?.updateOne({ _id: new ObjectId(activityId) }, { $pull: { students: new ObjectId(studentId) } });
+         // Eliminar al estudiante de la lista general de estudiantes de la actividad
+         const resultSubstract = await collections.activities?.updateOne(
+            { _id: new ObjectId(activityId) },
+            { $pull: { students: new ObjectId(studentId) } }
+        );
 
-        await collections.users?.updateOne({ _id: new ObjectId(studentId) }, { $pull: { activities: new ObjectId(activityId) } });
+        // Eliminar al estudiante de cualquier grupo relacionado con la actividad
+        const resultGroupUpdate = await collections.groups?.updateMany(
+            { activity: new ObjectId(activityId) },
+            { $pull: { students: new ObjectId(studentId) } }
+        );
 
-        if (resultSubstract && resultSubstract.modifiedCount) {
-            _res.status(202).send(`Successfully removed student with id ${studentId}`);
-        } else if (!resultSubstract) {
-            _res.status(400).send(`Failed to remove student with id ${studentId}`);
-        } else if (!resultSubstract.modifiedCount) {
-            _res.status(404).send(`Student with id ${studentId} does not exist`);
+        // También eliminamos la actividad de la lista de actividades del estudiante
+        const resultUserUpdate = await collections.users?.updateOne(
+            { _id: new ObjectId(studentId) },
+            { $pull: { activities: new ObjectId(activityId) } }
+        );
+
+        // Verificar si se modificaron los documentos de la actividad, grupos y estudiante
+        if (resultSubstract?.modifiedCount || resultGroupUpdate?.modifiedCount || resultUserUpdate?.modifiedCount) {
+            _res.status(202).send({
+                message: `Successfully removed student with id ${studentId} from activity, groups, and user's activities`
+            });
+        } else if (!resultSubstract?.modifiedCount) {
+            _res.status(404).send({
+                message: `Student with id ${studentId} does not exist in activity or groups`
+            });
+        } else {
+            _res.status(400).send({
+                message: `Failed to remove student with id ${studentId}`
+            });
         }
+
     } catch (error: any) {
         console.error(error.message);
         _res.status(400).send(error.message);

@@ -12,6 +12,7 @@ import { Worker } from 'worker_threads';
 import path from 'path';
 import Group from "../models/group";
 import { addUserNotification } from "../functions/user-functions";
+import emailService from "../services/email.service";
 
 export const activitiesRouter = express.Router();
 
@@ -205,7 +206,6 @@ activitiesRouter.post("/:id/create-algorithm", async (req: Request, res: Respons
         res.status(500).send({
             message: error.message
         });
-
     }
 
 });
@@ -255,6 +255,7 @@ const startAlgorithmWorker = (data: any) => {
             
         } catch (error: any) {
             console.log(error);
+            throw new Error(error);
         }        
 
     });
@@ -272,6 +273,56 @@ const startAlgorithmWorker = (data: any) => {
         }
     });
 };
+
+activitiesRouter.post("/:id/send-questionnaire-remaining/:questionnaireId", async (req: Request, res: Response) => {
+
+    const { id, questionnaireId } = req?.params;
+
+    try {
+        // Obtener la actividad por ID
+        const activity = await collections.activities?.findOne({ _id: new ObjectId(id) });
+        if (!activity) {
+          return res.status(400).send({ message: 'Actividad no encontrada' });
+        }
+
+        // Buscar estudiantes que no han respondido el cuestionario
+        const studentsWhoDidNotAnswer = await collections.users?.find({
+            _id: { $in: activity.students },  // Filtrar estudiantes asignados
+            askedQuestionnaires: { 
+              $not: {
+                $elemMatch: {
+                  questionnaire: new ObjectId(questionnaireId)  // Filtrar estudiantes que no han respondido el cuestionario
+                }
+              }
+            }
+          }).toArray();
+        
+        // console.log(studentsWhoDidNotAnswer);
+
+        studentsWhoDidNotAnswer?.forEach(async (student) => {
+            // se le envia un correo para que se registre
+            let mailDetails = {
+                to: student.email,
+                subject: 'Cuestionario pendiente',
+                text: `Tu profesor necesita que realices el siguiente cuestionario: http://localhost:4200/questionnaire/${questionnaireId}`
+            };
+
+            await emailService.sendEmail(mailDetails);
+        });
+
+        return res.status(200).send({
+            message: 'Mails sent successfully'
+        });
+
+      } catch (error:any) {
+        console.error('Error al obtener los estudiantes:', error);
+        return res.status(400).send({
+            message: error.message
+        });
+      }   
+
+
+});
 
 
 activitiesRouter.use("/:activityId/groups", groupsRouter);

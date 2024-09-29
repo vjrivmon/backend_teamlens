@@ -142,14 +142,33 @@ questionnairesRouter.put("/:id/submit", async (req: Request, res: Response) => {
 
             const roles = getBelbinMainRoles(testValues);
 
-            const result = await collections.users?.updateOne({ _id: authUserObjectId }, {
-                $push: {
-                    askedQuestionnaires: {
+            const result = await collections.users?.updateOne(
+                { 
+                  _id: authUserObjectId, 
+                  "askedQuestionnaires.questionnaire": new ObjectId(id) 
+                },
+                {
+                  $set: {
+                    "askedQuestionnaires.$.result": Object.keys(roles[0])[0]
+                  }
+                }
+              );
+              
+              // Si no existe una respuesta previa, entonces el array askedQuestionnaires no contiene este cuestionario
+              if (!result || result.matchedCount === 0) {
+                await collections.users?.updateOne(
+                  { _id: authUserObjectId },
+                  {
+                    $push: {
+                      askedQuestionnaires: {
                         questionnaire: new ObjectId(id),
                         result: Object.keys(roles[0])[0]
-                    } as any
-                }
-            });
+                      } as any
+                    }
+                  }
+                );
+              }
+              
             
             if (result && result.modifiedCount) {
                 res.status(200).send({

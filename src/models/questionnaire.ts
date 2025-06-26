@@ -6,6 +6,7 @@ export default class Questionnaire {
         public description: string,
         public questions: Question[],
         public questionnaireType: string,
+        public enabled?: boolean,
         public _id?: ObjectId
     ) { }
 }

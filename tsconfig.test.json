@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    /* Configuración específica para tests */
+    "noUnusedLocals": false,              /* Permitir variables no utilizadas en tests */
+    "noUnusedParameters": false,          /* Permitir parámetros no utilizados en tests */
+    "strictPropertyInitialization": false, /* Más flexible con inicialización de propiedades */
+    "noImplicitAny": false,               /* Permitir any implícito en tests */
+    "types": ["node", "jest"]             /* Incluir tipos de Jest */
+  },
+  "include": [
+    "tests/**/*",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "build"
+  ]
+} 

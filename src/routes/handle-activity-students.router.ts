@@ -35,10 +35,12 @@ handleActivityStudentsRouter.get("/", async (req: Request, res: Response) => {
 handleActivityStudentsRouter.post("/", async (req: Request, res: Response) => {
 
     const { activityId } = req?.params;
+    console.log(`📋 [ActivityStudents] Iniciando proceso de adición de estudiantes a actividad: ${activityId}`);
 
     try {
 
         const { emails } = req.body; // Array of student emails (docs)
+        console.log(`📧 [ActivityStudents] Emails a procesar:`, emails);
 
         //Check if students exist before adding them to the activity
         const users = await collections.users?.find({ email: { $in: emails } }).toArray();
@@ -50,22 +52,60 @@ handleActivityStudentsRouter.post("/", async (req: Request, res: Response) => {
             existingUserEmails.push(user.email);
         });
 
+        console.log(`👥 [ActivityStudents] Usuarios existentes encontrados: ${existingUserEmails.length}`);
+        console.log(`📧 [ActivityStudents] Emails existentes:`, existingUserEmails);
+
         //logica de negocio: si el usuario no existe se crea una cuenta temporal con su email, se le envia un correo para que se registre y se le añade a la actividad     
         const temporalUsersEmail: string[] = []
+        const emailErrors: string[] = []
+        const emailSuccesses: string[] = []
 
         for (let index = 0; index < emails.length; index++) {
             const email = emails[index];
+            console.log(`🔄 [ActivityStudents] Procesando email ${index + 1}/${emails.length}: ${email}`);
+            
             if (!existingUserEmails.includes(email)) {
                 temporalUsersEmail.push(email);
-                //crear cuenta temporal
-                const temporalUserId = await createNonRegisteredAccount(email);
-                if (temporalUserId) {
-                    existingUserIds.push(temporalUserId);
-                    console.log("Users ID added: ", existingUserIds)
+                console.log(`➕ [ActivityStudents] Creando cuenta temporal para: ${email}`);
+                
+                try {
+                    //crear cuenta temporal
+                    const temporalUserId = await createNonRegisteredAccount(email);
+                    
+                    if (temporalUserId) {
+                        existingUserIds.push(temporalUserId);
+                        emailSuccesses.push(email);
+                        console.log(`✅ [ActivityStudents] Usuario temporal creado exitosamente: ${email} (ID: ${temporalUserId})`);
+                    } else {
+                        console.error(`❌ [ActivityStudents] No se pudo crear usuario temporal para: ${email}`);
+                        emailErrors.push(`${email}: No se pudo crear cuenta temporal`);
+                    }
+                } catch (error: any) {
+                    console.error(`❌ [ActivityStudents] Error creando cuenta temporal para ${email}:`, error);
+                    emailErrors.push(`${email}: ${error.message}`);
                 }
+            } else {
+                console.log(`✅ [ActivityStudents] Usuario ya existe: ${email}`);
             }
-
         }
+
+        // Log del resumen del proceso
+        console.log(`📊 [ActivityStudents] Resumen del procesamiento de emails:`);
+        console.log(`  - Emails procesados: ${emails.length}`);
+        console.log(`  - Usuarios existentes: ${existingUserEmails.length}`);
+        console.log(`  - Cuentas temporales intentadas: ${temporalUsersEmail.length}`);
+        console.log(`  - Invitaciones exitosas: ${emailSuccesses.length}`);
+        console.log(`  - Errores de email: ${emailErrors.length}`);
+
+        if (emailErrors.length > 0) {
+            console.error(`❌ [ActivityStudents] Errores en el envío de emails:`, emailErrors);
+        }
+
+        if (emailSuccesses.length > 0) {
+            console.log(`✅ [ActivityStudents] Invitaciones enviadas exitosamente a:`, emailSuccesses);
+        }
+
+        console.log(`👥 [ActivityStudents] IDs de usuarios finales a añadir:`, existingUserIds);
 
         const query = { _id: new ObjectId(activityId) };
         const result = await collections.activities?.updateOne(query, {
@@ -76,31 +116,59 @@ handleActivityStudentsRouter.post("/", async (req: Request, res: Response) => {
             $addToSet: { activities: new ObjectId(activityId) }
         });
 
-        existingUserIds.forEach(async (id) => {
-            await addUserNotification(id, {
-                title: "Activity",
-                description: `You have been added to a new activity`,
-                link: `/activities/${activityId}`
-            })
+        console.log(`🔔 [ActivityStudents] Enviando notificaciones a ${existingUserIds.length} usuarios...`);
+
+        // Añadir notificaciones con manejo de errores mejorado
+        const notificationPromises = existingUserIds.map(async (id) => {
+            try {
+                await addUserNotification(id, {
+                    title: "Actividad",
+                    description: `Has sido añadido a una nueva actividad`,
+                    link: `/activities/${activityId}`
+                });
+                console.log(`✅ [ActivityStudents] Notificación enviada a usuario: ${id}`);
+            } catch (error: any) {
+                console.error(`❌ [ActivityStudents] Error enviando notificación a usuario ${id}:`, error);
+            }
         });
 
+        await Promise.all(notificationPromises);
 
         if (result && result.modifiedCount) {
-            res.status(200).send({
+            const responseMessage = {
                 message: `Successfully added students to activity with id ${activityId}`,
-                students: users
-            });
+                studentsAdded: existingUserIds.length,
+                existingUsers: existingUserEmails.length,
+                temporalUsers: temporalUsersEmail.length,
+                emailSuccesses: emailSuccesses.length,
+                emailErrors: emailErrors.length,
+                details: {
+                    existingUsers: existingUserEmails,
+                    temporalUsersCreated: emailSuccesses,
+                    emailErrors: emailErrors
+                }
+            };
+
+            console.log(`🎉 [ActivityStudents] Proceso completado exitosamente:`, responseMessage);
+            res.status(200).send(responseMessage);
         } else if (!result) {
+            console.error(`❌ [ActivityStudents] Error actualizando actividad ${activityId}`);
             res.status(400).send(`Failed added students to activity with id ${activityId}`);
         } else if (result.matchedCount) {
+            console.log(`ℹ️  [ActivityStudents] Actividad ${activityId} ya está actualizada`);
             res.status(304).send(`Activity with id ${activityId} is already up to date`);
         } else {
+            console.error(`❌ [ActivityStudents] Actividad ${activityId} no encontrada`);
             res.status(404).send(`Activity with id ${activityId} does not exist`);
         }
 
     } catch (error: any) {
-        console.error(error);
-        res.status(400).send(error.message);
+        console.error(`💥 [ActivityStudents] Error crítico en adición de estudiantes:`, error);
+        console.error(`💥 [ActivityStudents] Stack trace:`, error.stack);
+        res.status(400).send({
+            error: error.message,
+            details: `Error procesando estudiantes para actividad ${activityId}`
+        });
     }
 
 });

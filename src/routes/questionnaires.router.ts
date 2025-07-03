@@ -231,6 +231,67 @@ questionnairesRouter.delete("/:id", async (req: Request, res: Response) => {
     }
 });
 
+/**
+ * Endpoint para obtener estadísticas de completitud de cuestionarios por actividad
+ * Devuelve el número de estudiantes que han completado cada cuestionario
+ * @route GET /questionnaires/activity/:activityId/stats
+ * @param {string} activityId - ID de la actividad
+ * @returns {Object} Estadísticas de completitud por cuestionario
+ */
+questionnairesRouter.get("/activity/:activityId/stats", async (req: Request, res: Response) => {
+    const activityId = req?.params?.activityId;
+
+    try {
+        // Obtener todos los cuestionarios habilitados
+        const questionnaires = await collections.questionnaires?.find<Questionnaire>({ enabled: true }).toArray();
+        
+        if (!questionnaires || questionnaires.length === 0) {
+            res.status(200).send([]);
+            return;
+        }
+
+        // Obtener todos los estudiantes de la actividad
+        const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
+        
+        if (!activity) {
+            res.status(404).send({
+                message: `Activity with id ${activityId} does not exist`
+            });
+            return;
+        }
+
+        const studentIds = activity.students || [];
+        const totalStudents = studentIds.length;
+
+        // Crear el pipeline de agregación para contar las respuestas por cuestionario
+        const statsPromises = questionnaires.map(async (questionnaire) => {
+            // Contar cuántos estudiantes de esta actividad han respondido este cuestionario
+            const completedCount = await collections.users?.countDocuments({
+                _id: { $in: studentIds },
+                "askedQuestionnaires.questionnaire": questionnaire._id
+            });
+
+            return {
+                questionnaireId: questionnaire._id,
+                questionnaireTitle: questionnaire.title,
+                questionnaireType: questionnaire.questionnaireType,
+                totalStudents: totalStudents,
+                completedCount: completedCount || 0,
+                completionPercentage: totalStudents > 0 ? Math.round((completedCount || 0) / totalStudents * 100) : 0
+            };
+        });
+
+        const stats = await Promise.all(statsPromises);
+
+        res.status(200).send(stats);
+
+    } catch (error: any) {
+        console.error(error.message);
+        res.status(500).send({
+            message: error.message
+        });
+    }
+});
 
 function getBelbinMainRoles(testValues: any) {
 

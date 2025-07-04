@@ -20,5 +20,6 @@ export interface Question {
 export enum QuestionType {
     MultipleChoice = "MultipleChoice",
     OpenText = "OpenText",
-    Rating = "Rating"
+    Rating = "Rating",
+    Distribution = "Distribution"
 }

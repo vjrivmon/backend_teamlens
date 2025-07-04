@@ -25,8 +25,16 @@ async function initializeSystemData() {
         const existingBelbin = await collections.questionnaires?.findOne({ 
             questionnaireType: "BELBIN" 
         });
+
+        // Verificar si el cuestionario existente tiene el formato correcto (tipo Distribution)
+        const needsUpdate = existingBelbin && existingBelbin.questions?.some(q => q.type === "MultipleChoice");
         
-        if (!existingBelbin) {
+        if (!existingBelbin || needsUpdate) {
+            if (needsUpdate) {
+                console.log('🔄 [Database] Actualizando cuestionario BELBIN al formato correcto (Distribution)...');
+                // Eliminar el cuestionario antiguo para recrearlo
+                await collections.questionnaires?.deleteOne({ questionnaireType: "BELBIN" });
+            }
             console.log('📝 [Database] Creando cuestionario BELBIN automáticamente...');
             
             // Datos del cuestionario BELBIN
@@ -37,7 +45,7 @@ async function initializeSystemData() {
                 enabled: true,
                 questions: [
                     {
-                        type: QuestionType.MultipleChoice,
+                        type: QuestionType.Distribution,
                         question: "Cómo creo que puedo contribuir a un grupo de trabajo:",
                         options: [
                             "Veo fácilmente y aprovecho nuevas oportunidades",
@@ -51,7 +59,7 @@ async function initializeSystemData() {
                         ]
                     },
                     {
-                        type: QuestionType.MultipleChoice,
+                        type: QuestionType.Distribution,
                         question: "Si tengo alguna deficiencia cuando trabajo con los demás, ésta podría ser:",
                         options: [
                             "No estoy tranquilo y cómodo a no ser que la reunión esté bien estructurada",
@@ -65,7 +73,7 @@ async function initializeSystemData() {
                         ]
                     },
                     {
-                        type: QuestionType.MultipleChoice,
+                        type: QuestionType.Distribution,
                         question: "Cuando estoy trabajando en un proyecto con otras personas:",
                         options: [
                             "Los compañeros aceptan mis sugerencias positivamente",
@@ -79,7 +87,7 @@ async function initializeSystemData() {
                         ]
                     },
                     {
-                        type: QuestionType.MultipleChoice,
+                        type: QuestionType.Distribution,
                         question: "Un enfoque típico personal cuando trabajo en grupo es:",
                         options: [
                             "Tengo interés en conocer mejor a los compañeros",
@@ -93,7 +101,7 @@ async function initializeSystemData() {
                         ]
                     },
                     {
-                        type: QuestionType.MultipleChoice,
+                        type: QuestionType.Distribution,
                         question: "Una cosa que me gusta cuando trabajo es:",
                         options: [
                             "Poder analizar todas las alternativas",
@@ -107,7 +115,7 @@ async function initializeSystemData() {
                         ]
                     },
                     {
-                        type: QuestionType.MultipleChoice,
+                        type: QuestionType.Distribution,
                         question: "Si encontrase alguna dificultad porque el tiempo se nos echa encima o porque hay personas problemáticas...",
                         options: [
                             "Me gustaría apartarme y pensar tranquilamente",
@@ -121,7 +129,7 @@ async function initializeSystemData() {
                         ]
                     },
                     {
-                        type: QuestionType.MultipleChoice,
+                        type: QuestionType.Distribution,
                         question: "Si pienso en los problemas que he tenido cuando he trabajado con otros, veo que...",
                         options: [
                             "Me impaciento con aquellos que impiden que avancemos en el trabajo",
@@ -144,8 +152,8 @@ async function initializeSystemData() {
             } else {
                 console.warn('⚠️  [Database] No se pudo crear el cuestionario BELBIN automáticamente');
             }
-        } else {
-            // Verificar que esté habilitado
+        } else if (existingBelbin && !needsUpdate) {
+            // Verificar que esté habilitado solo si el cuestionario ya existe y tiene el formato correcto
             if (!existingBelbin.enabled) {
                 await collections.questionnaires?.updateOne(
                     { questionnaireType: "BELBIN" },

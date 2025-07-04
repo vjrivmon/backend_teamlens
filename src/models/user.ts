@@ -32,14 +32,35 @@ export interface AskedQuestionnaire {
 }
 
 /**
- * Interfaz para representar una notificación del usuario
+ * Interfaz Enterprise para Notificaciones de Usuario
+ * 
+ * Modelo avanzado que soporta gestión granular, categorización inteligente
+ * y seguimiento completo del estado de las notificaciones
  */
 export interface INotification {
-    title: string;
-    description: string;
-    date?: string;                // Fecha en formato string para mostrar al usuario
-    timestamp?: Date;             // Timestamp exacto para ordenamiento
-    link?: string;                // Enlace opcional para la notificación
-    read?: boolean;               // Indicador de si la notificación ha sido leída
-    type?: 'info' | 'warning' | 'success' | 'error'; // Tipo de notificación para styling
+    _id?: ObjectId;                                   // ID único de la notificación
+    title: string;                                    // Título de la notificación
+    description: string;                              // Descripción detallada
+    date?: string;                                    // Fecha formateada para mostrar al usuario
+    timestamp?: Date;                                 // Timestamp exacto para ordenamiento
+    link?: string;                                    // Enlace opcional para navegación
+    
+    // Propiedades enterprise para gestión avanzada
+    read?: boolean;                                   // Estado de lectura
+    type?: 'activity' | 'group' | 'system';         // Categorización inteligente
+    priority?: 'high' | 'normal' | 'low';           // Sistema de prioridades
+    icon?: string;                                    // Icono específico para cada tipo
+    expiresAt?: Date;                                // Fecha de expiración automática
+    actionRequired?: boolean;                        // Indica si requiere acción del usuario
+    createdAt?: Date;                                // Fecha de creación
+    updatedAt?: Date;                                // Fecha de última actualización
+    
+    // Metadatos adicionales para contexto y trazabilidad
+    metadata?: {
+        activityId?: ObjectId;                       // ID de actividad relacionada
+        groupId?: ObjectId;                          // ID de grupo relacionado
+        senderId?: ObjectId;                         // ID del usuario que generó la notificación
+        originalEvent?: string;                      // Evento original que disparó la notificación
+        [key: string]: any;                         // Metadatos adicionales flexibles
+    };
 }

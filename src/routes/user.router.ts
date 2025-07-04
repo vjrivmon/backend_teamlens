@@ -18,32 +18,319 @@ usersRouter.get("/", async (_req: Request, res: Response) => {
     }
 });
 
-usersRouter.post("/clear-notifications", async (req: Request, res: Response) => {
+/**
+ * ==========================================================================
+ * SISTEMA DE NOTIFICACIONES ENTERPRISE - ENDPOINTS GRANULARES
+ * ==========================================================================
+ */
 
+/**
+ * GET /users/notifications - Obtiene notificaciones paginadas con filtros
+ * Soporta paginación, filtrado por tipo/estado/prioridad y búsqueda
+ */
+usersRouter.get("/notifications", async (req: Request, res: Response) => {
     const authUserId = req.session?.authuser as string;
+    
+    // Parámetros de paginación y filtros
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const skip = (page - 1) * limit;
+    
+    // Filtros avanzados
+    const typeFilter = req.query.type as string;
+    const statusFilter = req.query.status as string;
+    const priorityFilter = req.query.priority as string;
+    const searchFilter = req.query.search as string;
 
     try {
-        const user = await collections.users?.updateOne({ _id: new ObjectId(authUserId) }, {
-            $unset: {
-                notifications: 1
-            }
-        });
+        const user = await collections.users?.findOne<User>({ _id: new ObjectId(authUserId) });
 
         if (!user) {
             res.status(404).send(`User with id ${authUserId} does not exist`);
-            return
+            return;
         }
 
-        res.status(200).send({
-            message: `Successfully cleared notifications for user with id ${authUserId}`
+        let notifications = user.notifications || [];
+
+        // Aplicar filtros
+        if (typeFilter && typeFilter !== 'all') {
+            notifications = notifications.filter(n => n.type === typeFilter);
+        }
+
+        if (statusFilter && statusFilter !== 'all') {
+            if (statusFilter === 'unread') {
+                notifications = notifications.filter(n => !n.read);
+            } else if (statusFilter === 'read') {
+                notifications = notifications.filter(n => n.read);
+            }
+        }
+
+        if (priorityFilter && priorityFilter !== 'all') {
+            notifications = notifications.filter(n => n.priority === priorityFilter);
+        }
+
+        if (searchFilter) {
+            const searchLower = searchFilter.toLowerCase();
+            notifications = notifications.filter(n => 
+                n.title.toLowerCase().includes(searchLower) || 
+                n.description.toLowerCase().includes(searchLower)
+            );
+        }
+
+        // Ordenar por timestamp (más recientes primero)
+        notifications.sort((a, b) => {
+            const aTime = a.timestamp || a.createdAt || new Date(0);
+            const bTime = b.timestamp || b.createdAt || new Date(0);
+            return new Date(bTime).getTime() - new Date(aTime).getTime();
         });
 
+        // Paginación
+        const total = notifications.length;
+        const paginatedNotifications = notifications.slice(skip, skip + limit);
+        const hasMore = skip + limit < total;
+
+        // Agregar IDs únicos si no existen
+        const notificationsWithIds = paginatedNotifications.map((notification, index) => ({
+            ...notification,
+            _id: notification._id || new ObjectId().toString()
+        }));
+
+        const response = {
+            notifications: notificationsWithIds,
+            pagination: {
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit)
+            },
+            hasMore
+        };
+
+        console.log(`📄 Notificaciones entregadas: ${paginatedNotifications.length}/${total} para usuario ${authUserId}`);
+        res.status(200).send(response);
 
     } catch (error: any) {
-        console.error(error.message);
+        console.error('❌ Error al obtener notificaciones:', error.message);
         res.status(400).send(error.message);
     }
+});
 
+/**
+ * PATCH /users/notifications/:notificationId/read - Marca una notificación como leída
+ */
+usersRouter.patch("/notifications/:notificationId/read", async (req: Request, res: Response) => {
+    const authUserId = req.session?.authuser as string;
+    const { notificationId } = req.params;
+
+    try {
+        const result = await collections.users?.updateOne(
+            { 
+                _id: new ObjectId(authUserId),
+                "notifications._id": new ObjectId(notificationId)
+            },
+            { 
+                $set: { 
+                    "notifications.$.read": true,
+                    "notifications.$.updatedAt": new Date()
+                }
+            }
+        );
+
+        if (!result || result.matchedCount === 0) {
+            res.status(404).send(`Notification with id ${notificationId} not found`);
+            return;
+        }
+
+        console.log(`✅ Notificación ${notificationId} marcada como leída para usuario ${authUserId}`);
+        res.status(200).send({ 
+            message: `Notification ${notificationId} marked as read`,
+            notificationId,
+            read: true
+        });
+
+    } catch (error: any) {
+        console.error('❌ Error al marcar notificación como leída:', error.message);
+        res.status(400).send(error.message);
+    }
+});
+
+/**
+ * PATCH /users/notifications/:notificationId/unread - Marca una notificación como no leída
+ */
+usersRouter.patch("/notifications/:notificationId/unread", async (req: Request, res: Response) => {
+    const authUserId = req.session?.authuser as string;
+    const { notificationId } = req.params;
+
+    try {
+        const result = await collections.users?.updateOne(
+            { 
+                _id: new ObjectId(authUserId),
+                "notifications._id": new ObjectId(notificationId)
+            },
+            { 
+                $set: { 
+                    "notifications.$.read": false,
+                    "notifications.$.updatedAt": new Date()
+                }
+            }
+        );
+
+        if (!result || result.matchedCount === 0) {
+            res.status(404).send(`Notification with id ${notificationId} not found`);
+            return;
+        }
+
+        console.log(`📩 Notificación ${notificationId} marcada como no leída para usuario ${authUserId}`);
+        res.status(200).send({ 
+            message: `Notification ${notificationId} marked as unread`,
+            notificationId,
+            read: false
+        });
+
+    } catch (error: any) {
+        console.error('❌ Error al marcar notificación como no leída:', error.message);
+        res.status(400).send(error.message);
+    }
+});
+
+/**
+ * DELETE /users/notifications/:notificationId - Elimina una notificación específica
+ */
+usersRouter.delete("/notifications/:notificationId", async (req: Request, res: Response) => {
+    const authUserId = req.session?.authuser as string;
+    const { notificationId } = req.params;
+
+    try {
+        const result = await collections.users?.updateOne(
+            { _id: new ObjectId(authUserId) },
+            { 
+                $pull: { 
+                    notifications: { _id: new ObjectId(notificationId) }
+                }
+            }
+        );
+
+        if (!result || result.matchedCount === 0) {
+            res.status(404).send(`User or notification not found`);
+            return;
+        }
+
+        console.log(`🗑️ Notificación ${notificationId} eliminada para usuario ${authUserId}`);
+        res.status(200).send({ 
+            message: `Notification ${notificationId} deleted successfully`,
+            notificationId
+        });
+
+    } catch (error: any) {
+        console.error('❌ Error al eliminar notificación:', error.message);
+        res.status(400).send(error.message);
+    }
+});
+
+/**
+ * PATCH /users/notifications/mark-all-read - Marca todas las notificaciones como leídas
+ */
+usersRouter.patch("/notifications/mark-all-read", async (req: Request, res: Response) => {
+    const authUserId = req.session?.authuser as string;
+
+    try {
+        const result = await collections.users?.updateOne(
+            { _id: new ObjectId(authUserId) },
+            { 
+                $set: { 
+                    "notifications.$[].read": true,
+                    "notifications.$[].updatedAt": new Date()
+                }
+            }
+        );
+
+        if (!result || result.matchedCount === 0) {
+            res.status(404).send(`User with id ${authUserId} does not exist`);
+            return;
+        }
+
+        console.log(`📚 Todas las notificaciones marcadas como leídas para usuario ${authUserId}`);
+        res.status(200).send({ 
+            message: `All notifications marked as read for user ${authUserId}`,
+            userId: authUserId
+        });
+
+    } catch (error: any) {
+        console.error('❌ Error al marcar todas las notificaciones como leídas:', error.message);
+        res.status(400).send(error.message);
+    }
+});
+
+/**
+ * POST /users/clear-notifications - Elimina todas las notificaciones (legacy + nuevo)
+ */
+usersRouter.post("/clear-notifications", async (req: Request, res: Response) => {
+    const authUserId = req.session?.authuser as string;
+
+    try {
+        const result = await collections.users?.updateOne(
+            { _id: new ObjectId(authUserId) },
+            { 
+                $unset: { notifications: 1 }
+            }
+        );
+
+        if (!result || result.matchedCount === 0) {
+            res.status(404).send(`User with id ${authUserId} does not exist`);
+            return;
+        }
+
+        console.log(`🧹 Todas las notificaciones eliminadas para usuario ${authUserId}`);
+        res.status(200).send({
+            message: `Successfully cleared all notifications for user ${authUserId}`,
+            userId: authUserId
+        });
+
+    } catch (error: any) {
+        console.error('❌ Error al limpiar notificaciones:', error.message);
+        res.status(400).send(error.message);
+    }
+});
+
+/**
+ * GET /users/notifications/stats - Obtiene estadísticas de notificaciones
+ */
+usersRouter.get("/notifications/stats", async (req: Request, res: Response) => {
+    const authUserId = req.session?.authuser as string;
+
+    try {
+        const user = await collections.users?.findOne<User>({ _id: new ObjectId(authUserId) });
+
+        if (!user) {
+            res.status(404).send(`User with id ${authUserId} does not exist`);
+            return;
+        }
+
+        const notifications = user.notifications || [];
+        
+        const stats = {
+            total: notifications.length,
+            unread: notifications.filter(n => !n.read).length,
+            read: notifications.filter(n => n.read).length,
+            byType: {
+                activity: notifications.filter(n => n.type === 'activity').length,
+                group: notifications.filter(n => n.type === 'group').length,
+                system: notifications.filter(n => n.type === 'system').length
+            },
+            byPriority: {
+                high: notifications.filter(n => n.priority === 'high').length,
+                normal: notifications.filter(n => n.priority === 'normal').length,
+                low: notifications.filter(n => n.priority === 'low').length
+            }
+        };
+
+        console.log(`📊 Estadísticas de notificaciones entregadas para usuario ${authUserId}`);
+        res.status(200).send(stats);
+
+    } catch (error: any) {
+        console.error('❌ Error al obtener estadísticas de notificaciones:', error.message);
+        res.status(400).send(error.message);
+    }
 });
 
 usersRouter.get("/:id", async (req: Request, res: Response) => {

@@ -141,57 +141,74 @@ questionnairesRouter.put("/:id/submit", async (req: Request, res: Response) => {
         if (result?.questionnaireType == "BELBIN") {
 
             const roles = getBelbinMainRoles(testValues);
+            const belbinResult = Object.keys(roles[0])[0];
+            const completionDate = new Date();
 
-            const result = await collections.users?.updateOne(
-                { 
-                  _id: authUserObjectId, 
-                  "askedQuestionnaires.questionnaire": new ObjectId(id) 
-                },
-                {
-                  $set: {
-                    "askedQuestionnaires.$.result": Object.keys(roles[0])[0]
-                  }
-                }
-              );
-              
-              // Si no existe una respuesta previa, entonces el array askedQuestionnaires no contiene este cuestionario
-              if (!result || result.matchedCount === 0) {
-                await collections.users?.updateOne(
-                  { _id: authUserObjectId },
-                  {
-                    $push: {
-                      askedQuestionnaires: {
-                        questionnaire: new ObjectId(id),
-                        result: Object.keys(roles[0])[0]
-                      } as any
+            console.log(`🎯 [Questionnaires] Resultado Belbin calculado para usuario ${authUserId}: ${belbinResult}`);
+
+            // Verificar si ya existe una respuesta previa para este cuestionario
+            const existingResponse = await collections.users?.findOne({
+                _id: authUserObjectId,
+                "askedQuestionnaires.questionnaire": new ObjectId(id)
+            });
+
+            let updateResult;
+
+            if (existingResponse) {
+                // Actualizar respuesta existente
+                console.log(`🔄 [Questionnaires] Actualizando respuesta existente para usuario ${authUserId}`);
+                updateResult = await collections.users?.updateOne(
+                    { 
+                        _id: authUserObjectId, 
+                        "askedQuestionnaires.questionnaire": new ObjectId(id) 
+                    },
+                    {
+                        $set: {
+                            "askedQuestionnaires.$.result": belbinResult,
+                            "askedQuestionnaires.$.completedAt": completionDate
+                        }
                     }
-                  }
                 );
-              }
-              
-            
-            if (result && result.modifiedCount) {
-                res.status(200).send({
-                    message: "success", data: {
-                        questionnaire: id,
-                        result: Object.keys(roles[0])[0] as string
+            } else {
+                // Crear nueva respuesta
+                console.log(`➕ [Questionnaires] Creando nueva respuesta para usuario ${authUserId}`);
+                updateResult = await collections.users?.updateOne(
+                    { _id: authUserObjectId },
+                    {
+                        $push: {
+                            askedQuestionnaires: {
+                                questionnaire: new ObjectId(id),
+                                result: belbinResult,
+                                completedAt: completionDate
+                            }
+                        }
                     }
-                });
-            } else if (!result) {
-                res.status(400).send({
-                    message: `Failed to ask questionnaire with id ${id}`
-                });
-            } else if (result.matchedCount) {
-                res.status(304).send({
-                    message: `Questionnaire with id ${id} is already asked`
+                );
+            }
+
+            // Verificar que la actualización fue exitosa
+            if (updateResult && (updateResult.modifiedCount > 0 || updateResult.matchedCount > 0)) {
+                console.log(`✅ [Questionnaires] Cuestionario guardado exitosamente para usuario ${authUserId}`);
+                
+                // Obtener información del usuario para logs
+                const user = await collections.users?.findOne({ _id: authUserObjectId });
+                console.log(`📧 [Questionnaires] Email del usuario: ${user?.email} - Resultado: ${belbinResult}`);
+                
+                res.status(200).send({
+                    message: "success", 
+                    data: {
+                        questionnaire: id,
+                        result: belbinResult,
+                        userEmail: user?.email,
+                        completedAt: completionDate.toISOString()
+                    }
                 });
             } else {
-                res.status(404).send({
-                    message: `Questionnaire with id ${id} does not exist`
+                console.error(`❌ [Questionnaires] Error guardando cuestionario para usuario ${authUserId}`);
+                res.status(400).send({
+                    message: `Failed to save questionnaire with id ${id}`
                 });
             }
-           
-
         }
 
     } catch (error: any) {

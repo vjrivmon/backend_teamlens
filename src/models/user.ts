@@ -28,6 +28,7 @@ export default class User {
 export interface AskedQuestionnaire {
     questionnaire: ObjectId;
     result: string;
+    completedAt?: Date;           // Fecha en que se completó el cuestionario
 }
 
 /**

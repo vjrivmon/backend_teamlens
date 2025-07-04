@@ -3,6 +3,7 @@ import { ObjectId } from "mongodb";
 import Group from "../models/group";
 import { collections } from "../services/database.service";
 import { addStudentsToGroup } from "../functions/group-functions";
+import { verifyTeacher } from "../middlewares";
 
 
 export const handleGroupStudentsRouter = express.Router({ mergeParams: true });
@@ -34,7 +35,7 @@ handleGroupStudentsRouter.get("/", async (req: Request, res: Response) => {
     }
 });
 
-handleGroupStudentsRouter.post("/", async (req: Request, res: Response) => {
+handleGroupStudentsRouter.post("/", verifyTeacher, async (req: Request, res: Response) => {
 
     const { groupId } = req?.params;
 
@@ -71,7 +72,7 @@ handleGroupStudentsRouter.post("/", async (req: Request, res: Response) => {
 
 });
 
-handleGroupStudentsRouter.delete("/:studentId", async (_req: Request, _res: Response) => {
+handleGroupStudentsRouter.delete("/:studentId", verifyTeacher, async (_req: Request, _res: Response) => {
 
     const { groupId, studentId } = _req?.params;
 

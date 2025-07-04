@@ -2,6 +2,7 @@ import express, { Request, Response } from "express";
 import { ObjectId } from "mongodb";
 import Activity from "../models/activity";
 import { collections } from "../services/database.service";
+import { verifyTeacher } from "../middlewares";
 
 import { addUserNotification, createNonRegisteredAccount } from "../functions/user-functions";
 
@@ -32,7 +33,7 @@ handleActivityStudentsRouter.get("/", async (req: Request, res: Response) => {
     }
 });
 
-handleActivityStudentsRouter.post("/", async (req: Request, res: Response) => {
+handleActivityStudentsRouter.post("/", verifyTeacher, async (req: Request, res: Response) => {
 
     const { activityId } = req?.params;
     console.log(`📋 [ActivityStudents] Iniciando proceso de adición de estudiantes a actividad: ${activityId}`);
@@ -173,7 +174,7 @@ handleActivityStudentsRouter.post("/", async (req: Request, res: Response) => {
 
 });
 
-handleActivityStudentsRouter.delete("/:studentId", async (_req: Request, _res: Response) => {
+handleActivityStudentsRouter.delete("/:studentId", verifyTeacher, async (_req: Request, _res: Response) => {
 
     const { activityId, studentId } = _req?.params;
 

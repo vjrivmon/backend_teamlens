@@ -7,6 +7,7 @@ import Activity from "../models/activity";
 import { groupsRouter } from "./groups.router";
 import { handleActivityStudentsRouter } from "./handle-activity-students.router";
 import { createGroup, deleteGroup } from "../functions/group-functions";
+import { verifyTeacher } from "../middlewares";
 
 import { Worker } from 'worker_threads';
 import path from 'path';
@@ -84,7 +85,7 @@ activitiesRouter.post("/", async (req: Request, res: Response) => {
     }
 });
 
-activitiesRouter.put("/:id", async (req: Request, res: Response) => {
+activitiesRouter.put("/:id", verifyTeacher, async (req: Request, res: Response) => {
 
     const id = req?.params?.id;
 
@@ -121,7 +122,7 @@ activitiesRouter.put("/:id", async (req: Request, res: Response) => {
     }
 });
 
-activitiesRouter.delete("/:id", async (req: Request, res: Response) => {
+activitiesRouter.delete("/:id", verifyTeacher, async (req: Request, res: Response) => {
 
     const id = req?.params?.id;
 
@@ -173,7 +174,7 @@ const MAX_WORKERS = 10;
 let activeWorkers = 0;
 const taskQueue: any[] = [];
 
-activitiesRouter.post("/:id/create-algorithm", async (req: Request, res: Response) => {
+activitiesRouter.post("/:id/create-algorithm", verifyTeacher, async (req: Request, res: Response) => {
 
     const id = req?.params?.id;
 

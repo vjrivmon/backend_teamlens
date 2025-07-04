@@ -10,6 +10,7 @@ import Activity from "../models/activity";
 import { handleGroupStudentsRouter } from "./handle-group-students.router";
 
 import { createGroup, deleteGroup, getGroupsWithStudents } from "../functions/group-functions";
+import { verifyTeacher } from "../middlewares";
 
 import NotFoundError from "../functions/exceptions/NotFoundError";
 
@@ -56,7 +57,7 @@ groupsRouter.get("/:id", async (req: Request, res: Response) => {
     }
 });
 
-groupsRouter.post("/", async (req: Request, res: Response) => {
+groupsRouter.post("/", verifyTeacher, async (req: Request, res: Response) => {
 
     const { activityId } = req?.params;
 
@@ -95,7 +96,7 @@ groupsRouter.post("/", async (req: Request, res: Response) => {
     }
 });
 
-groupsRouter.put("/:id", async (req: Request, res: Response) => {
+groupsRouter.put("/:id", verifyTeacher, async (req: Request, res: Response) => {
 
     const { id } = req?.params;
 
@@ -128,7 +129,7 @@ groupsRouter.put("/:id", async (req: Request, res: Response) => {
     }
 });
 
-groupsRouter.delete("/:id", async (req: Request, res: Response) => {
+groupsRouter.delete("/:id", verifyTeacher, async (req: Request, res: Response) => {
 
     const { id } = req?.params;
 

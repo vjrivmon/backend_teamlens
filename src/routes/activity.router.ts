@@ -206,10 +206,22 @@ activitiesRouter.put("/:id/algorithm/config", verifyTeacher, async (req: Request
             });
         }
 
-        // Validaciones básicas de configuración
+        // Validaciones obligatorias de configuración del profesor
         if (!algorithmConfig.teamSize || algorithmConfig.teamSize < 2) {
             return res.status(400).send({
-                message: "Team size must be at least 2 students"
+                message: "Team size must be at least 2 students and is required"
+            });
+        }
+
+        if (!algorithmConfig.minTeams || algorithmConfig.minTeams < 1) {
+            return res.status(400).send({
+                message: "Minimum number of teams must be at least 1 and is required"
+            });
+        }
+
+        if (!algorithmConfig.maxTeams || algorithmConfig.maxTeams < algorithmConfig.minTeams) {
+            return res.status(400).send({
+                message: "Maximum number of teams must be at least equal to minimum teams and is required"
             });
         }
 
@@ -226,11 +238,21 @@ activitiesRouter.put("/:id/algorithm/config", verifyTeacher, async (req: Request
             });
         }
 
-        // Configurar valores por defecto
+        // Validar coherencia entre parámetros del profesor
+        const minStudentsNeeded = algorithmConfig.minTeams * algorithmConfig.teamSize;
+        const maxStudentsNeeded = algorithmConfig.maxTeams * algorithmConfig.teamSize;
+
+        if (minStudentsNeeded > totalStudents) {
+            return res.status(400).send({
+                message: `Configuration requires at least ${minStudentsNeeded} students (${algorithmConfig.minTeams} teams × ${algorithmConfig.teamSize} students), but only ${totalStudents} students are assigned`
+            });
+        }
+
+        // Usar EXACTAMENTE los parámetros del profesor, sin cálculos automáticos
         const config: AlgorithmConfig = {
             teamSize: algorithmConfig.teamSize,
-            minTeams: algorithmConfig.minTeams || Math.floor(totalStudents / algorithmConfig.teamSize),
-            maxTeams: algorithmConfig.maxTeams || Math.ceil(totalStudents / algorithmConfig.teamSize),
+            minTeams: algorithmConfig.minTeams,     // OBLIGATORIO del profesor
+            maxTeams: algorithmConfig.maxTeams,     // OBLIGATORIO del profesor
             exclusions: algorithmConfig.exclusions || [],
             inclusions: algorithmConfig.inclusions || [],
             additionalConstraints: algorithmConfig.additionalConstraints || [],
@@ -240,7 +262,7 @@ activitiesRouter.put("/:id/algorithm/config", verifyTeacher, async (req: Request
             lastConfiguredAt: new Date()
         };
 
-        console.log(`📊 [AlgorithmConfig] Configuración calculada:`, config);
+        console.log(`📊 [AlgorithmConfig] Configuración del profesor aplicada exactamente:`, config);
 
         // Verificar si todos los estudiantes han completado BELBIN
         const allCompleted = await validateAllStudentsCompletedBelbin(activityId);
@@ -305,7 +327,12 @@ activitiesRouter.put("/:id/algorithm/config", verifyTeacher, async (req: Request
                 algorithmStatus: algorithmStatus,
                 allStudentsCompletedBelbin: allCompleted,
                 totalStudents: totalStudents,
-                estimatedTeams: Math.ceil(totalStudents / config.teamSize),
+                // NO calculamos estimatedTeams - usamos solo parámetros del profesor
+                professorParams: {
+                    teamSize: config.teamSize,
+                    minTeams: config.minTeams,
+                    maxTeams: config.maxTeams
+                },
                 fileGenerated: fileGeneratedAfterChange,
                 filePath: filePath,
                 canRunAlgorithm: algorithmStatus === 'ready' && fileGeneratedAfterChange,
@@ -365,8 +392,12 @@ activitiesRouter.get("/:id/algorithm/config", verifyTeacher, async (req: Request
                 fileExists: fileExists,
                 fileName: fileExists ? generateAlgorithmFileName(activityId) : null,
                 canRunAlgorithm: activity.algorithmStatus === 'ready' && fileExists,
-                estimatedTeams: activity.algorithmConfig?.teamSize ? 
-                    Math.ceil(totalStudents / activity.algorithmConfig.teamSize) : null
+                // NO calculamos estimatedTeams - mostramos solo parámetros del profesor
+                professorParams: activity.algorithmConfig ? {
+                    teamSize: activity.algorithmConfig.teamSize,
+                    minTeams: activity.algorithmConfig.minTeams,
+                    maxTeams: activity.algorithmConfig.maxTeams
+                } : null
             }
         });
 
@@ -436,201 +467,386 @@ activitiesRouter.get("/:id/algorithm/validation", verifyTeacher, async (req: Req
 
 // Tarea y cola para gestionar las peticiones al algoritmo
 
-const MAX_WORKERS = 10;
+const MAX_WORKERS = 2;
 let activeWorkers = 0;
 const taskQueue: any[] = [];
 
 /**
- * Endpoint para ejecutar el algoritmo de formación de equipos usando el sistema dinámico
+ * Endpoint para ejecutar el algoritmo de formación de equipos con datos del frontend
+ * CORREGIDO: Ahora espera el resultado real del algoritmo antes de responder
  * @route POST /activities/:id/algorithm/execute
  * @param {string} id - ID de la actividad
- * @returns {Object} Estado de la ejecución del algoritmo
+ * @param {Object} req.body - Datos del algoritmo desde el frontend
+ * @returns {Object} Resultado completo del algoritmo una vez terminado
  */
 activitiesRouter.post("/:id/algorithm/execute", verifyTeacher, async (req: Request, res: Response) => {
     const activityId = req?.params?.id;
+    const frontendData = req?.body;
 
     console.log(`🚀 [AlgorithmExecute] ==========================================`);
     console.log(`🚀 [AlgorithmExecute] INICIANDO EJECUCIÓN DE ALGORITMO`);
     console.log(`🚀 [AlgorithmExecute] Actividad: ${activityId}`);
     console.log(`🚀 [AlgorithmExecute] Profesor: ${(req.session as any)?.authuser}`);
+    console.log(`🚀 [AlgorithmExecute] Datos del frontend:`, frontendData);
     console.log(`🚀 [AlgorithmExecute] Timestamp: ${new Date().toISOString()}`);
     console.log(`🚀 [AlgorithmExecute] ==========================================`);
 
     try {
-        // 1. Validar que la actividad existe y pertenece al profesor
+        // Paso 1: Validar actividad
         console.log(`🔍 [AlgorithmExecute] Paso 1: Validando actividad...`);
-        const activity = await collections.activities?.findOne({
+        
+        const activity = await collections.activities?.findOne({ 
             _id: new ObjectId(activityId),
-            teacher: new ObjectId((req.session as any)?.authuser)
+            teacher: new ObjectId(req.session?.authuser as string)
         });
-
+        
         if (!activity) {
             console.log(`❌ [AlgorithmExecute] Actividad no encontrada o acceso denegado`);
             return res.status(404).send({
                 message: `Activity ${activityId} not found or you don't have permission`
             });
         }
-
+        
         console.log(`✅ [AlgorithmExecute] Actividad validada: "${activity.title}"`);
         console.log(`📊 [AlgorithmExecute] Estudiantes en actividad: ${activity.students?.length || 0}`);
-        console.log(`🔧 [AlgorithmExecute] Estado actual: ${activity.algorithmStatus || 'not-configured'}`);
-        console.log(`⚙️ [AlgorithmExecute] Config: ${JSON.stringify(activity.algorithmConfig || {})}`);
 
-        // 2. Verificar que el algoritmo está configurado
-        console.log(`🔍 [AlgorithmExecute] Paso 2: Verificando configuración...`);
-        if (!activity.algorithmConfig?.isConfigured) {
-            console.log(`❌ [AlgorithmExecute] Algoritmo no configurado`);
+        // Paso 2: Procesar datos del frontend
+        console.log(`🔍 [AlgorithmExecute] Paso 2: Procesando datos del frontend...`);
+        
+        const { algorithmData, selectedStudentIds, groupConfigurations, restrictions } = frontendData;
+        
+        if (!algorithmData || !selectedStudentIds) {
+            console.log(`❌ [AlgorithmExecute] No se recibieron datos del algoritmo del frontend`);
             return res.status(400).send({
-                message: "Algorithm is not configured for this activity. Please configure it first.",
-                details: {
-                    hasConfig: !!activity.algorithmConfig,
-                    isConfigured: activity.algorithmConfig?.isConfigured || false
-                }
+                message: "Missing algorithm data or selected student IDs from frontend"
             });
         }
+        
+        console.log(`✅ [AlgorithmExecute] Datos del frontend recibidos:`);
+        console.log(`📊 [AlgorithmExecute] - Estudiantes seleccionados: ${selectedStudentIds.length}`);
+        console.log(`📊 [AlgorithmExecute] - Constraints iniciales: ${algorithmData.constraints?.length || 0}`);
+        console.log(`📊 [AlgorithmExecute] - Configuraciones: ${groupConfigurations?.length || 0}`);
+        console.log(`📊 [AlgorithmExecute] - Restricciones: ${Object.keys(restrictions || {}).length}`);
 
-        console.log(`✅ [AlgorithmExecute] Configuración válida`);
-
-        // 3. Verificar que todos los estudiantes han completado BELBIN
-        console.log(`🔍 [AlgorithmExecute] Paso 3: Verificando completitud BELBIN...`);
-        const allCompleted = await validateAllStudentsCompletedBelbin(activityId);
-        console.log(`📊 [AlgorithmExecute] BELBIN completitud: ${allCompleted}`);
-
-        if (!allCompleted) {
-            console.log(`❌ [AlgorithmExecute] No todos los estudiantes han completado BELBIN`);
+        // Paso 3: Obtener traits BELBIN de estudiantes seleccionados
+        console.log(`🔍 [AlgorithmExecute] Paso 3: Obteniendo traits BELBIN de estudiantes seleccionados...`);
+        
+        const selectedStudentObjectIds = selectedStudentIds.map((id: string) => new ObjectId(id));
+        
+        // DEBUG: Primero obtenemos TODOS los estudiantes seleccionados para ver su estructura
+        console.log(`🔍 [AlgorithmExecute] DEBUG - Obteniendo todos los estudiantes seleccionados para análisis...`);
+        const allSelectedStudents = await collections.users?.find({
+            _id: { $in: selectedStudentObjectIds }
+        }).toArray();
+        
+        console.log(`📊 [AlgorithmExecute] DEBUG - Estudiantes seleccionados encontrados: ${allSelectedStudents?.length || 0}`);
+        
+        // Analizar estructura de cada estudiante
+        allSelectedStudents?.forEach((student, index) => {
+            console.log(`👤 [AlgorithmExecute] DEBUG - Estudiante ${index + 1}: ${student.email}`);
+            console.log(`   - ID: ${student._id}`);
+            console.log(`   - askedQuestionnaires existe: ${!!student.askedQuestionnaires}`);
+            console.log(`   - askedQuestionnaires length: ${student.askedQuestionnaires?.length || 0}`);
             
-            // Obtener más detalles sobre qué estudiantes faltan
-            const students = await collections.users?.find({
-                _id: { $in: activity.students || [] }
-            }).toArray();
+            if (student.askedQuestionnaires && student.askedQuestionnaires.length > 0) {
+                student.askedQuestionnaires.forEach((aq: any, aqIndex: number) => {
+                    console.log(`   - Questionnaire ${aqIndex}: result="${aq.result}", questionnaire="${aq.questionnaire}"`);
+                });
+            } else {
+                console.log(`   - NO tiene askedQuestionnaires o está vacío`);
+            }
+        });
+        
+        // Ahora hacer la consulta original
+        const studentsWithBelbin = await collections.users?.find({
+            _id: { $in: selectedStudentObjectIds },
+            "askedQuestionnaires": {
+                $elemMatch: {
+                    "result": { $in: ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI"] }
+                }
+            }
+        }).toArray();
 
-            const belbinQuestionnaireId = "6718b2263e29ad19c0e0c61f";
-            const studentsWithoutBelbin = students?.filter(student => {
-                return !student.askedQuestionnaires?.some(q => 
-                    q.questionnaire.toString() === belbinQuestionnaireId && q.result
-                );
-            }) || [];
-
-            console.log(`📋 [AlgorithmExecute] Estudiantes sin BELBIN: ${studentsWithoutBelbin.length}/${students?.length || 0}`);
-            console.log(`👥 [AlgorithmExecute] Emails sin BELBIN:`, studentsWithoutBelbin.map(s => s.email));
-
+        console.log(`📊 [AlgorithmExecute] DEBUG - Estudiantes con BELBIN encontrados: ${studentsWithBelbin?.length || 0}`);
+        
+        if (!studentsWithBelbin || studentsWithBelbin.length === 0) {
+            console.log(`❌ [AlgorithmExecute] No se encontraron estudiantes seleccionados con BELBIN`);
             return res.status(400).send({
-                message: "Cannot execute algorithm: not all students have completed BELBIN test",
-                details: {
-                    totalStudents: students?.length || 0,
-                    studentsWithoutBelbin: studentsWithoutBelbin.length,
-                    missingStudents: studentsWithoutBelbin.map(s => ({ id: s._id, email: s.email, name: s.name }))
+                message: "No selected students found or students don't have BELBIN results"
+            });
+        }
+
+        // Crear mapeo de índices para constraints
+        const studentIdToIndex = new Map();
+        const membersWithTraits = studentsWithBelbin.map((student, index) => {
+            studentIdToIndex.set(student._id.toString(), index);
+            
+            const belbinResult = student.askedQuestionnaires?.find(
+                aq => ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI", "IM", "CO"].includes(aq.result)
+            );
+            
+            // CORREGIDO: Mapear códigos BELBIN correctamente
+            let mappedResult = belbinResult?.result || "SH";
+            if (mappedResult === "IM") mappedResult = "CW";  // Implementador → Coordinador de Trabajo
+            if (mappedResult === "CO") mappedResult = "CH";  // Coordinator → Coordinador
+            
+            const traits = [mappedResult];
+            
+            console.log(`📝 [AlgorithmExecute] Estudiante ${student.email}: traits=${traits.join(', ')}`);
+            return { traits };
+        });
+
+        // Verificar que todos los estudiantes seleccionados tienen BELBIN
+        const studentsWithoutBelbin = selectedStudentIds.filter((id: string) => 
+            !studentsWithBelbin.some(s => s._id.toString() === id)
+        );
+
+        if (studentsWithoutBelbin.length > 0) {
+            console.log(`❌ [AlgorithmExecute] ${studentsWithoutBelbin.length} estudiantes seleccionados no tienen BELBIN`);
+            console.log(`🔍 [AlgorithmExecute] DEBUG - IDs sin BELBIN detectados:`);
+            
+            // Mostrar detalles de los estudiantes que fallan la validación
+            studentsWithoutBelbin.forEach((missingId: string, index: number) => {
+                const studentData = allSelectedStudents?.find(s => s._id.toString() === missingId);
+                console.log(`   ${index + 1}. ID: ${missingId}`);
+                console.log(`      Email: ${studentData?.email || 'NO ENCONTRADO'}`);
+                console.log(`      askedQuestionnaires: ${JSON.stringify(studentData?.askedQuestionnaires || [])}`);
+            });
+            
+            return res.status(400).send({
+                message: `${studentsWithoutBelbin.length} selected students don't have BELBIN results`,
+                studentsWithoutBelbin: studentsWithoutBelbin,
+                debugInfo: studentsWithoutBelbin.map((id: string) => {
+                    const studentData = allSelectedStudents?.find(s => s._id.toString() === id);
+                    return {
+                        id: id,
+                        email: studentData?.email,
+                        askedQuestionnaires: studentData?.askedQuestionnaires || []
+                    };
+                })
+            });
+        }
+
+        console.log(`✅ [AlgorithmExecute] ${membersWithTraits.length} estudiantes con BELBIN obtenidos correctamente`);
+
+        // Paso 4: Construir datos del algoritmo con traits reales
+        console.log(`🔍 [AlgorithmExecute] Paso 4: Construyendo datos del algoritmo con traits reales...`);
+        
+        const processedAlgorithmData = {
+            ...algorithmData,
+            members: membersWithTraits,
+            number_members: membersWithTraits.length
+        };
+
+        console.log(`✅ [AlgorithmExecute] Datos del algoritmo corregidos:`);
+        console.log(`📊 [AlgorithmExecute] - Miembros: ${processedAlgorithmData.number_members}`);
+        console.log(`📊 [AlgorithmExecute] - Members con traits: ${processedAlgorithmData.members.length}`);
+        console.log(`📊 [AlgorithmExecute] - Traits sample: ${processedAlgorithmData.members.slice(0, 3).map((m: any) => m.traits.join(',')).join(' | ')}`);
+
+        // Paso 5: Procesar restricciones del frontend
+        console.log(`🔍 [AlgorithmExecute] Paso 5: Procesando restricciones del frontend...`);
+        
+        console.log(`🔍 [AlgorithmExecute] DEBUG - Mapeo de estudiantes a índices:`);
+        Array.from(studentIdToIndex.entries()).forEach(([id, index]) => {
+            const student = studentsWithBelbin.find(s => s._id.toString() === id);
+            console.log(`   Índice ${index}: ${student?.email} (ID: ${id})`);
+        });
+        
+        // Procesar restricciones "Must NOT be together" (DifferentTeam)
+        if (restrictions?.mustNotBeTogether?.length > 0) {
+            console.log(`🚫 [AlgorithmExecute] Procesando ${restrictions.mustNotBeTogether.length} restricciones "Must NOT be together"`);
+            
+            restrictions.mustNotBeTogether.forEach((restriction: any[], restrictionIndex: number) => {
+                console.log(`🔍 [AlgorithmExecute] Restricción mustNotBeTogether ${restrictionIndex}:`, restriction.map(u => u.email || u._id));
+                
+                const memberIndices = restriction
+                    .map(user => {
+                        const index = studentIdToIndex.get(user._id);
+                        console.log(`   Usuario ${user.email || user._id} -> Índice ${index}`);
+                        return index;
+                    })
+                    .filter(index => index !== undefined);
+
+                console.log(`🔍 [AlgorithmExecute] Índices válidos para mustNotBeTogether: [${memberIndices.join(', ')}]`);
+
+                if (memberIndices.length >= 2) {
+                    // Para cada par de estudiantes en la restricción, crear una constraint DifferentTeam
+                    for (let i = 0; i < memberIndices.length; i++) {
+                        for (let j = i + 1; j < memberIndices.length; j++) {
+                            const constraintToAdd = {
+                                type: "DifferentTeam",
+                                name: `frontend_must_not_${restrictionIndex}_${i}_${j}`,
+                                members: [memberIndices[i], memberIndices[j]]
+                            };
+                            processedAlgorithmData.constraints.push(constraintToAdd);
+                            console.log(`✅ [AlgorithmExecute] Añadida constraint DifferentTeam:`, constraintToAdd);
+                        }
+                    }
+                    console.log(`✅ [AlgorithmExecute] Añadidas restricciones DifferentTeam para ${memberIndices.length} estudiantes`);
+                } else {
+                    console.log(`⚠️ [AlgorithmExecute] Restricción mustNotBeTogether ignorada - necesita al menos 2 miembros válidos (tiene ${memberIndices.length})`);
                 }
             });
         }
 
-        console.log(`✅ [AlgorithmExecute] Todos los estudiantes han completado BELBIN`);
+        // Procesar restricciones "Must be together" (SameTeam)
+        if (restrictions?.mustBeTogether?.length > 0) {
+            console.log(`✅ [AlgorithmExecute] Procesando ${restrictions.mustBeTogether.length} restricciones "Must be together"`);
+            
+            restrictions.mustBeTogether.forEach((restriction: any[], restrictionIndex: number) => {
+                console.log(`🔍 [AlgorithmExecute] Restricción mustBeTogether ${restrictionIndex}:`, restriction.map(u => u.email || u._id));
+                
+                const memberIndices = restriction
+                    .map(user => {
+                        const index = studentIdToIndex.get(user._id);
+                        console.log(`   Usuario ${user.email || user._id} -> Índice ${index}`);
+                        return index;
+                    })
+                    .filter(index => index !== undefined);
 
-        // 4. Verificar/crear archivo JSON del algoritmo
-        console.log(`🔍 [AlgorithmExecute] Paso 4: Verificando archivo JSON del algoritmo...`);
-        let fileExists = await algorithmFileExists(activityId);
-        console.log(`📂 [AlgorithmExecute] Archivo JSON existe: ${fileExists}`);
+                console.log(`🔍 [AlgorithmExecute] Índices válidos para mustBeTogether: [${memberIndices.join(', ')}]`);
 
-        if (!fileExists) {
-            console.log(`🔧 [AlgorithmExecute] Generando archivo JSON del algoritmo...`);
-            try {
-                const { createAlgorithmFileForActivity } = await import("../functions/algorithm-functions");
-                const teamSize = activity.algorithmConfig?.teamSize || 4;
-                const jsonResult = await createAlgorithmFileForActivity(activityId, teamSize);
-                console.log(`✅ [AlgorithmExecute] Archivo JSON generado: ${jsonResult}`);
-                fileExists = true;
-            } catch (jsonError: any) {
-                console.log(`❌ [AlgorithmExecute] Error generando archivo JSON:`, jsonError);
-                return res.status(500).send({
-                    message: "Failed to generate algorithm JSON file",
-                    error: jsonError.message
-                });
-            }
+                if (memberIndices.length >= 2) {
+                    const constraintToAdd = {
+                        type: "SameTeam",
+                        name: `frontend_must_be_${restrictionIndex}`,
+                        members: memberIndices
+                    };
+                    processedAlgorithmData.constraints.push(constraintToAdd);
+                    console.log(`✅ [AlgorithmExecute] Añadida constraint SameTeam:`, constraintToAdd);
+                    console.log(`✅ [AlgorithmExecute] Añadida restricción SameTeam para ${memberIndices.length} estudiantes`);
+                } else {
+                    console.log(`⚠️ [AlgorithmExecute] Restricción mustBeTogether ignorada - necesita al menos 2 miembros válidos (tiene ${memberIndices.length})`);
+                }
+            });
         }
 
-        // 5. Verificar que el algoritmo no está ya ejecutándose
-        console.log(`🔍 [AlgorithmExecute] Paso 5: Verificando estado de ejecución...`);
+        // DEBUG: Mostrar todas las constraints finales
+        console.log(`🔍 [AlgorithmExecute] DEBUG - Constraints finales del algoritmo:`);
+        processedAlgorithmData.constraints.forEach((constraint: any, index: number) => {
+            console.log(`   ${index}: ${constraint.type} - ${constraint.name} - members: [${constraint.members?.join(', ') || 'N/A'}]`);
+        });
+
+        // 7. Generar archivo JSON usando datos del frontend
+        console.log(`🔍 [AlgorithmExecute] Paso 7: Generando archivo JSON con datos del frontend...`);
+        const { saveAlgorithmJSON, getAlgorithmFilePath } = await import("../functions/algorithm-functions");
+        
+        try {
+            const filePath = await saveAlgorithmJSON(activityId, processedAlgorithmData);
+            if (!filePath) {
+                throw new Error("No se pudo guardar el archivo JSON");
+            }
+            console.log(`✅ [AlgorithmExecute] Archivo JSON generado con datos del frontend: ${filePath}`);
+        } catch (jsonError: any) {
+            console.log(`❌ [AlgorithmExecute] Error generando archivo JSON:`, jsonError);
+            return res.status(500).send({
+                message: "Failed to generate algorithm JSON file with frontend data",
+                error: jsonError.message
+            });
+        }
+
+        // Paso 8: Verificar estado de ejecución
+        console.log(`🔍 [AlgorithmExecute] Paso 8: Verificando estado de ejecución...`);
         if (activity.algorithmStatus === 'running') {
             console.log(`⚠️ [AlgorithmExecute] Algoritmo ya en ejecución`);
             return res.status(409).send({
-                message: "Algorithm is already running for this activity",
-                status: activity.algorithmStatus
+                message: 'Algorithm is already running',
+                status: activity.algorithmStatus,
+                activityId: activityId
             });
         }
 
         console.log(`✅ [AlgorithmExecute] Todas las validaciones pasadas`);
 
-        // 6. Preparar datos para el worker
-        console.log(`🔍 [AlgorithmExecute] Paso 6: Preparando datos del worker...`);
+        // Paso 9: Preparar datos del worker
+        console.log(`🔍 [AlgorithmExecute] Paso 9: Preparando datos del worker...`);
+        
+        // CRÍTICO: Enviar los IDs de estudiantes en el orden exacto usado para el JSON
+        const orderedStudentIds = studentsWithBelbin.map(student => student._id.toString());
+        
         const workerData = {
             activityId: activityId,
-            teamSize: activity.algorithmConfig?.teamSize || 4,
-            customConstraints: activity.algorithmConfig?.additionalConstraints || []
+            teamSize: processedAlgorithmData.constraints.find((c: any) => c.type === 'SizeCardinality')?.team_size || 4,
+            customConstraints: processedAlgorithmData.constraints.filter((c: any) => 
+                c.type === 'SameTeam' || c.type === 'DifferentTeam'
+            ),
+            // NUEVO: Enviar los IDs en el orden correcto para que el worker use el mismo mapeo
+            orderedStudentIds: orderedStudentIds
         };
 
-        console.log(`📋 [AlgorithmExecute] Datos del worker:`, workerData);
+        console.log(`📋 [AlgorithmExecute] Datos del worker (con datos del frontend):`, {
+            activityId: workerData.activityId,
+            teamSize: workerData.teamSize,
+            constraintsCount: workerData.customConstraints.length,
+            studentsCount: processedAlgorithmData.number_members,
+            orderedStudentIds: workerData.orderedStudentIds
+        });
 
-        // 7. Enviar notificación de inicio
-        console.log(`🔍 [AlgorithmExecute] Paso 7: Enviando notificación de inicio...`);
+        // Paso 10: Enviar notificación de inicio
+        console.log(`🔍 [AlgorithmExecute] Paso 10: Enviando notificación de inicio...`);
         try {
             await addUserNotification(new ObjectId(activity.teacher), {
                 title: '🚀 Algoritmo de formación iniciado',
-                description: `El algoritmo de formación de equipos ha comenzado para la actividad "${activity.title}". Tiempo estimado: ${estimateExecutionTime(activity.students?.length || 0)} minutos.`,
+                description: `El algoritmo ha comenzado a procesar ${processedAlgorithmData.number_members} estudiantes para la actividad "${activity.title}". Tiempo estimado: ${estimateExecutionTime(activity.students?.length || 0)} minutos.`,
                 link: `/activities/${activityId}`
             });
             console.log(`✅ [AlgorithmExecute] Notificación enviada`);
         } catch (notifError: any) {
             console.log(`⚠️ [AlgorithmExecute] Error enviando notificación:`, notifError);
-            // No fallar por esto, continuar
         }
 
-        // 8. Actualizar estado a 'running'
-        console.log(`🔍 [AlgorithmExecute] Paso 8: Actualizando estado a 'running'...`);
-        await collections.activities?.updateOne(
-            { _id: new ObjectId(activityId) },
-            {
-                $set: {
-                    algorithmStatus: 'running',
-                    updatedAt: new Date()
-                }
+        // Paso 11: Actualizar estado a 'running'
+        console.log(`🔍 [AlgorithmExecute] Paso 11: Actualizando estado a 'running'...`);
+        
+        await collections.activities?.updateOne({ _id: new ObjectId(activityId) }, {
+            $set: { 
+                algorithmStatus: 'running',
+                algorithmStartedAt: new Date(),
+                updatedAt: new Date()
             }
-        );
-
+        });
+        
         console.log(`✅ [AlgorithmExecute] Estado actualizado a 'running'`);
 
-        // 9. Ejecutar algoritmo en worker
-        console.log(`🔍 [AlgorithmExecute] Paso 9: Iniciando worker...`);
+        // Paso 12: CORREGIDO - Esperar resultado del worker en lugar de responder inmediatamente
+        console.log(`🔍 [AlgorithmExecute] Paso 12: Ejecutando worker y esperando resultado...`);
         console.log(`👷 [AlgorithmExecute] Workers activos: ${activeWorkers}/${MAX_WORKERS}`);
 
-        if (activeWorkers < MAX_WORKERS) {
-            console.log(`🚀 [AlgorithmExecute] Iniciando worker inmediatamente`);
-            startAlgorithmWorker(workerData);
-        } else {
-            console.log(`⏳ [AlgorithmExecute] Añadiendo a cola - Posición: ${taskQueue.length + 1}`);
-            taskQueue.push(workerData);
-        }
-
-        console.log(`🚀 [AlgorithmExecute] ==========================================`);
-        console.log(`🚀 [AlgorithmExecute] ALGORITMO INICIADO EXITOSAMENTE`);
-        console.log(`🚀 [AlgorithmExecute] Actividad: "${activity.title}"`);
-        console.log(`🚀 [AlgorithmExecute] Estudiantes: ${activity.students?.length || 0}`);
-        console.log(`🚀 [AlgorithmExecute] Tiempo estimado: ${estimateExecutionTime(activity.students?.length || 0)} min`);
-        console.log(`🚀 [AlgorithmExecute] Estado: running`);
-        console.log(`🚀 [AlgorithmExecute] ==========================================`);
-
-        return res.status(200).send({
-            success: true,
-            message: 'Algorithm execution started successfully',
-            data: {
-                activityId: activityId,
-                activityTitle: activity.title,
-                algorithmStatus: 'running',
-                estimatedTime: estimateExecutionTime(activity.students?.length || 0),
-                queuePosition: activeWorkers >= MAX_WORKERS ? taskQueue.length : 0,
-                startedAt: new Date().toISOString(),
-                studentsCount: activity.students?.length || 0,
-                teamSize: activity.algorithmConfig?.teamSize || 4
+        // Crear una promesa que se resuelva cuando el worker termine
+        const algorithmPromise = new Promise<any>((resolve, reject) => {
+            if (activeWorkers < MAX_WORKERS) {
+                console.log(`🚀 [AlgorithmExecute] Iniciando worker inmediatamente`);
+                startAlgorithmWorkerWithCallback(workerData, resolve, reject);
+            } else {
+                console.log(`⏳ [AlgorithmExecute] Añadiendo a cola - Posición: ${taskQueue.length + 1}`);
+                taskQueue.push({ workerData, resolve, reject });
             }
+        });
+
+        console.log(`🔄 [AlgorithmExecute] Esperando resultado del algoritmo...`);
+        
+        // Esperar a que el algoritmo termine (esto puede tardar 15-30 segundos)
+        const algorithmResult = await algorithmPromise;
+
+        console.log(`🚀 [AlgorithmExecute] ==========================================`);
+        console.log(`🚀 [AlgorithmExecute] ALGORITMO COMPLETADO EXITOSAMENTE`);
+        console.log(`🚀 [AlgorithmExecute] Actividad: "${activity.title}"`);
+        console.log(`🚀 [AlgorithmExecute] Estudiantes procesados: ${processedAlgorithmData.number_members}`);
+        console.log(`🚀 [AlgorithmExecute] Equipos creados: ${algorithmResult.teamsCount}`);
+        console.log(`🚀 [AlgorithmExecute] Tiempo total: ${Date.now() - algorithmResult.executionTime}ms`);
+        console.log(`🚀 [AlgorithmExecute] ==========================================`);
+
+        // Responder con el resultado completo
+        return res.status(200).send({
+            message: 'Algorithm execution completed successfully',
+            activityId: activityId,
+            activityTitle: activity.title,
+            result: algorithmResult,
+            studentsProcessed: processedAlgorithmData.number_members,
+            teamsCreated: algorithmResult.teamsCount,
+            executionTime: Date.now() - algorithmResult.executionTime,
+            timestamp: new Date().toISOString(),
+            stage: "completed"
         });
 
     } catch (error: any) {
@@ -641,31 +857,26 @@ activitiesRouter.post("/:id/algorithm/execute", verifyTeacher, async (req: Reque
         console.log(`💥 [AlgorithmExecute] Stack: ${error.stack}`);
         console.log(`💥 [AlgorithmExecute] ==========================================`);
 
-        // Actualizar estado a error
+        // Actualizar estado de error
         try {
-            await collections.activities?.updateOne(
-                { _id: new ObjectId(activityId) },
-                {
-                    $set: {
-                        algorithmStatus: 'error',
-                        updatedAt: new Date()
-                    }
+            await collections.activities?.updateOne({ _id: new ObjectId(activityId) }, {
+                $set: { 
+                    algorithmStatus: 'error',
+                    algorithmError: error.message,
+                    updatedAt: new Date()
                 }
-            );
+            });
             console.log(`🔧 [AlgorithmExecute] Estado actualizado a 'error'`);
         } catch (updateError: any) {
             console.error(`💥 [AlgorithmExecute] Error adicional actualizando estado:`, updateError);
         }
 
         return res.status(500).send({
-            success: false,
             message: "Internal server error executing algorithm",
             error: error.message,
-            details: {
-                activityId: activityId,
-                timestamp: new Date().toISOString(),
-                stage: "execution"
-            }
+            activityId: activityId,
+            timestamp: new Date().toISOString(),
+            stage: "execution"
         });
     }
 });
@@ -700,8 +911,7 @@ const estimateExecutionTime = (studentCount: number): number => {
 };
 
 /**
- * Inicia un worker para ejecutar el algoritmo de formación de equipos
- * @param {Object} workerData - Datos para el worker (activityId, teamSize, customConstraints)
+ * Versión original del worker para compatibilidad
  */
 const startAlgorithmWorker = (workerData: any) => {
     activeWorkers++;
@@ -739,10 +949,10 @@ const startAlgorithmWorker = (workerData: any) => {
                         const groupName = `Equipo ${index + 1}`;
                         console.log(`🏗️ [AlgorithmWorker] Creando grupo: ${groupName} con ${team.length} estudiantes`);
                         
-                        await createGroup(activityId, {
+                    await createGroup(activityId, {
                             name: groupName,
-                            students: team
-                        } as Group);
+                        students: team
+                    } as Group);
                         
                         console.log(`✅ [AlgorithmWorker] Grupo creado: ${groupName}`);
                     } catch (groupError: any) {
@@ -757,11 +967,11 @@ const startAlgorithmWorker = (workerData: any) => {
                 const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
 
                 // Enviar notificación de finalización exitosa
-                await addUserNotification(new ObjectId(activity?.teacher), {
+            await addUserNotification(new ObjectId(activity?.teacher), {
                     title: '🎉 Algoritmo de formación completado',
                     description: `El algoritmo ha creado ${teams.length} equipos exitosamente para la actividad "${activity?.title}". ¡Revisa los resultados!`,
-                    link: `/activities/${activityId}`
-                });
+                link: `/activities/${activityId}`
+            });
 
                 console.log(`🎉 [AlgorithmWorker] Proceso completado exitosamente para actividad: ${activityId}`);
 
@@ -789,7 +999,7 @@ const startAlgorithmWorker = (workerData: any) => {
                     link: `/activities/${activityId}`
                 });
             }
-
+            
         } catch (error: any) {
             console.error(`💥 [AlgorithmWorker] Error crítico procesando resultado:`, error);
             
@@ -838,6 +1048,179 @@ const startAlgorithmWorker = (workerData: any) => {
 
         if (code !== 0) {
             console.error(`⚠️ [AlgorithmWorker] Worker terminó con código de error: ${code}`);
+        }
+    });
+};
+
+/**
+ * Nueva versión del worker que permite esperar el resultado con callbacks/promesas
+ * Esta función ejecuta el algoritmo y resuelve la promesa cuando termina
+ */
+const startAlgorithmWorkerWithCallback = (workerData: any, resolve: (value: any) => void, reject: (reason: any) => void) => {
+    activeWorkers++;
+
+    const { activityId } = workerData;
+    console.log(`👷 [AlgorithmWorkerCallback] Iniciando worker con callback para actividad: ${activityId}`);
+
+    const worker = new Worker(path.join(__dirname, '../scripts/algorithm-req-worker.js'), { workerData });
+
+    worker.on('message', async (workerResult) => {
+        console.log(`📨 [AlgorithmWorkerCallback] Mensaje recibido del worker para actividad: ${activityId}`);
+        console.log(`📋 [AlgorithmWorkerCallback] Resultado:`, workerResult);
+
+        try {
+            if (workerResult.success) {
+                // Algoritmo ejecutado exitosamente
+                console.log(`✅ [AlgorithmWorkerCallback] Algoritmo exitoso para actividad: ${activityId}`);
+
+                // Actualizar estado de la actividad
+                await collections.activities?.updateOne({ _id: new ObjectId(activityId) }, {
+                    $set: { 
+                        algorithmStatus: 'done',
+                        algorithmResult: workerResult,
+                        algorithmCompletedAt: new Date(),
+                        updatedAt: new Date()
+                    }
+                });
+
+                // Procesar los resultados y crear grupos
+                const teams = JSON.parse(workerResult.result);
+                console.log(`👥 [AlgorithmWorkerCallback] Creando ${teams.length} grupos para actividad: ${activityId}`);
+
+                // Crear grupos basados en los resultados del algoritmo
+                const groupCreationPromises = teams.map(async (team: any, index: number) => {
+                    try {
+                        const groupName = `Equipo ${index + 1}`;
+                        console.log(`🏗️ [AlgorithmWorkerCallback] Creando grupo: ${groupName} con ${team.length} estudiantes`);
+                        
+                        await createGroup(activityId, {
+                            name: groupName,
+                            students: team
+                        } as Group);
+                        
+                        console.log(`✅ [AlgorithmWorkerCallback] Grupo creado: ${groupName}`);
+                    } catch (groupError: any) {
+                        console.error(`💥 [AlgorithmWorkerCallback] Error creando grupo ${index + 1}:`, groupError);
+                    }
+                });
+
+                // Esperar a que se creen todos los grupos
+                await Promise.all(groupCreationPromises);
+
+                // Obtener información de la actividad para notificación
+                const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
+
+                // Enviar notificación de finalización exitosa
+                await addUserNotification(new ObjectId(activity?.teacher), {
+                    title: '🎉 Algoritmo de formación completado',
+                    description: `El algoritmo ha creado ${teams.length} equipos exitosamente para la actividad "${activity?.title}". ¡Revisa los resultados!`,
+                    link: `/activities/${activityId}`
+                });
+
+                console.log(`🎉 [AlgorithmWorkerCallback] Proceso completado exitosamente para actividad: ${activityId}`);
+
+                // Resolver la promesa con el resultado exitoso
+                resolve({
+                    success: true,
+                    teamsCount: teams.length,
+                    executionTime: Date.now(),
+                    result: workerResult.result,
+                    activityId: activityId
+                });
+
+            } else {
+                // Error en el algoritmo
+                console.error(`❌ [AlgorithmWorkerCallback] Error en algoritmo para actividad: ${activityId}`);
+                console.error(`💥 [AlgorithmWorkerCallback] Error details:`, workerResult.error);
+
+                // Actualizar estado de error
+                await collections.activities?.updateOne({ _id: new ObjectId(activityId) }, {
+                    $set: { 
+                        algorithmStatus: 'error',
+                        algorithmResult: workerResult,
+                        algorithmCompletedAt: new Date(),
+                        updatedAt: new Date()
+                    }
+                });
+
+                // Obtener información de la actividad para notificación
+                const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
+
+                // Enviar notificación de error
+                await addUserNotification(new ObjectId(activity?.teacher), {
+                    title: '❌ Error en algoritmo de formación',
+                    description: `Hubo un error ejecutando el algoritmo para la actividad "${activity?.title}". Error: ${workerResult.error}`,
+                    link: `/activities/${activityId}`
+                });
+
+                // Rechazar la promesa con el error
+                reject(new Error(`Algorithm execution failed: ${workerResult.error}`));
+            }
+            
+        } catch (error: any) {
+            console.error(`💥 [AlgorithmWorkerCallback] Error crítico procesando resultado:`, error);
+            
+            // Actualizar estado de error crítico
+            await collections.activities?.updateOne({ _id: new ObjectId(activityId) }, {
+                $set: { 
+                    algorithmStatus: 'error',
+                    algorithmCompletedAt: new Date(),
+                    updatedAt: new Date()
+                }
+            });
+
+            // Obtener información de la actividad para notificación
+            const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
+
+            // Enviar notificación de error crítico
+            await addUserNotification(new ObjectId(activity?.teacher), {
+                title: '💥 Error crítico en algoritmo',
+                description: `Error crítico procesando resultado del algoritmo para "${activity?.title}". Contacta al administrador.`,
+                link: `/activities/${activityId}`
+            });
+
+            // Rechazar la promesa con el error crítico
+            reject(error);
+        }
+    });
+
+    worker.on('error', async (workerError) => {
+        console.error(`💥 [AlgorithmWorkerCallback] Error en worker para actividad: ${activityId}`, workerError);
+        
+        // Actualizar estado de error
+        await collections.activities?.updateOne({ _id: new ObjectId(activityId) }, {
+            $set: { 
+                algorithmStatus: 'error',
+                algorithmCompletedAt: new Date(),
+                updatedAt: new Date()
+            }
+        });
+
+        // Rechazar la promesa con el error del worker
+        reject(workerError);
+    });
+
+    worker.on('exit', (code) => {
+        activeWorkers--;
+        console.log(`🚪 [AlgorithmWorkerCallback] Worker terminado para actividad: ${activityId} con código: ${code}`);
+
+        // Procesar siguiente tarea en cola
+        if (taskQueue.length > 0) {
+            const nextTask = taskQueue.shift();
+            console.log(`⏭️ [AlgorithmWorkerCallback] Procesando siguiente tarea en cola`);
+            
+            // Verificar si la siguiente tarea tiene callbacks (nueva versión) o es la versión anterior
+            if (nextTask.resolve && nextTask.reject) {
+                startAlgorithmWorkerWithCallback(nextTask.workerData, nextTask.resolve, nextTask.reject);
+            } else {
+                // Versión anterior sin callbacks
+                startAlgorithmWorker(nextTask);
+            }
+        }
+
+        if (code !== 0) {
+            console.error(`⚠️ [AlgorithmWorkerCallback] Worker terminó con código de error: ${code}`);
+            reject(new Error(`Worker process exited with code ${code}`));
         }
     });
 };
@@ -1182,14 +1565,35 @@ activitiesRouter.get("/:id/algorithm/preview", verifyTeacher, async (req: Reques
             });
         }
 
-        const teamSize = activity.algorithmConfig.teamSize;
+        const algorithmConfig = activity.algorithmConfig;
         const totalStudents = studentsWithBelbin.length;
-        const estimatedTeams = Math.ceil(totalStudents / teamSize);
 
-        console.log(`📊 [AlgorithmPreview] Generando preview: ${totalStudents} estudiantes → ${estimatedTeams} equipos de ${teamSize}`);
+        // Validar que tenemos todos los parámetros del profesor
+        if (!algorithmConfig.teamSize || !algorithmConfig.minTeams || !algorithmConfig.maxTeams) {
+            return res.status(400).send({
+                message: "Algorithm configuration is incomplete. Missing teamSize, minTeams, or maxTeams from professor.",
+                details: {
+                    hasTeamSize: !!algorithmConfig.teamSize,
+                    hasMinTeams: !!algorithmConfig.minTeams,
+                    hasMaxTeams: !!algorithmConfig.maxTeams
+                }
+            });
+        }
 
-        // Generar preview simulado (distribución balanceada simple)
-        const previewTeams = generateSimulatedTeams(studentsWithBelbin, teamSize);
+        // Usar EXACTAMENTE los parámetros del profesor, no calcular automáticamente
+        console.log(`📊 [AlgorithmPreview] Generando preview con parámetros del profesor:`);
+        console.log(`📊 [AlgorithmPreview] - Estudiantes: ${totalStudents}`); 
+        console.log(`📊 [AlgorithmPreview] - Tamaño equipo: ${algorithmConfig.teamSize}`);
+        console.log(`📊 [AlgorithmPreview] - Equipos min: ${algorithmConfig.minTeams}`);
+        console.log(`📊 [AlgorithmPreview] - Equipos max: ${algorithmConfig.maxTeams}`);
+
+        // Generar preview simulado usando parámetros del profesor
+        const previewTeams = generateSimulatedTeams(
+            studentsWithBelbin, 
+            algorithmConfig.teamSize,
+            algorithmConfig.minTeams,
+            algorithmConfig.maxTeams
+        );
 
         // Analizar la distribución de traits en cada equipo
         const teamsAnalysis = previewTeams.map((team, index) => {
@@ -1262,12 +1666,21 @@ activitiesRouter.get("/:id/algorithm/preview", verifyTeacher, async (req: Reques
 
 /**
  * Función auxiliar para generar equipos simulados de manera balanceada
+ * CORREGIDO: Usa parámetros del profesor, no cálculos automáticos
  * @param students Array de estudiantes con traits BELBIN
- * @param teamSize Tamaño deseado de cada equipo
+ * @param teamSize Tamaño deseado de cada equipo (del profesor)
+ * @param minTeams Número mínimo de equipos (del profesor)
+ * @param maxTeams Número máximo de equipos (del profesor)
  * @returns Array de equipos simulados
  */
-function generateSimulatedTeams(students: any[], teamSize: number): any[][] {
+function generateSimulatedTeams(
+    students: any[], 
+    teamSize: number, 
+    minTeams: number, 
+    maxTeams: number
+): any[][] {
     console.log(`🎲 [SimulatedTeams] Generando equipos simulados para ${students.length} estudiantes`);
+    console.log(`🎲 [SimulatedTeams] Parámetros del profesor: ${teamSize} por equipo, ${minTeams}-${maxTeams} equipos`);
 
     // Agrupar estudiantes por trait BELBIN
     const studentsByTrait: any = {};
@@ -1286,11 +1699,26 @@ function generateSimulatedTeams(students: any[], teamSize: number): any[][] {
     console.log(`📊 [SimulatedTeams] Distribución por traits:`, Object.keys(studentsByTrait).map(trait => 
         `${trait}: ${studentsByTrait[trait].length}`).join(', '));
 
+    // Determinar número de equipos óptimo dentro del rango del profesor
+    const minStudentsNeeded = minTeams * teamSize;
+    const maxStudentsNeeded = maxTeams * teamSize;
+    
+    let targetTeams = minTeams;
+    
+    if (students.length <= maxStudentsNeeded) {
+        // Calcular el mejor número de equipos dentro del rango permitido
+        targetTeams = Math.max(minTeams, Math.min(maxTeams, Math.ceil(students.length / teamSize)));
+    } else {
+        // Si hay más estudiantes de los que pueden caber en maxTeams, usar maxTeams
+        targetTeams = maxTeams;
+    }
+
+    console.log(`🎯 [SimulatedTeams] Usando ${targetTeams} equipos (rango profesor: ${minTeams}-${maxTeams})`);
+
     const teams: any[][] = [];
-    const totalTeams = Math.ceil(students.length / teamSize);
     
     // Inicializar equipos vacíos
-    for (let i = 0; i < totalTeams; i++) {
+    for (let i = 0; i < targetTeams; i++) {
         teams.push([]);
     }
 
@@ -1305,7 +1733,7 @@ function generateSimulatedTeams(students: any[], teamSize: number): any[][] {
         studentsOfTrait.forEach((student: any) => {
             if (teams[currentTeamIndex].length < teamSize) {
                 teams[currentTeamIndex].push(student);
-                currentTeamIndex = (currentTeamIndex + 1) % totalTeams;
+                currentTeamIndex = (currentTeamIndex + 1) % targetTeams;
             }
         });
     });
@@ -1316,9 +1744,9 @@ function generateSimulatedTeams(students: any[], teamSize: number): any[][] {
     );
 
     remainingStudents.forEach(student => {
-        // Encontrar el equipo con menos miembros
+        // Encontrar el equipo con menos miembros que aún no esté lleno
         const teamWithLeastMembers = teams.reduce((minTeam, currentTeam, index) => {
-            return currentTeam.length < teams[minTeam].length ? index : minTeam;
+            return (currentTeam.length < teams[minTeam].length && currentTeam.length < teamSize) ? index : minTeam;
         }, 0);
 
         if (teams[teamWithLeastMembers].length < teamSize) {
@@ -1327,6 +1755,7 @@ function generateSimulatedTeams(students: any[], teamSize: number): any[][] {
     });
 
     console.log(`✅ [SimulatedTeams] ${teams.length} equipos generados con tamaños: ${teams.map(team => team.length).join(', ')}`);
+    console.log(`🎯 [SimulatedTeams] Respetando parámetros del profesor: ${minTeams}-${maxTeams} equipos de ${teamSize}`);
     
     return teams;
 }
@@ -1792,8 +2221,25 @@ activitiesRouter.post("/:id/test-create-groups", verifyTeacher, async (req: Requ
         if (!fileExists) {
             console.log(`🧪 [TestCreateGroups] Generando archivo JSON...`);
             try {
-                const teamSize = activity.algorithmConfig?.teamSize || 4;
-                const jsonResult = await createAlgorithmFileForActivity(activityId, teamSize);
+                const config = activity.algorithmConfig;
+                
+                if (!config?.teamSize || !config?.minTeams || !config?.maxTeams) {
+                    testResults.steps.push({
+                        step: 4,
+                        name: "Verificar/crear archivo JSON",
+                        success: false,
+                        error: "Configuración del algoritmo incompleta - faltan teamSize, minTeams o maxTeams"
+                    });
+                    return res.status(400).send(testResults);
+                }
+
+                const jsonResult = await createAlgorithmFileForActivity(
+                    activityId, 
+                    config.teamSize,
+                    config.minTeams,
+                    config.maxTeams,
+                    config.additionalConstraints || []
+                );
                 fileExists = true;
                 testResults.steps.push({
                     step: 4,
@@ -1802,7 +2248,12 @@ activitiesRouter.post("/:id/test-create-groups", verifyTeacher, async (req: Requ
                     data: {
                         fileExists: true,
                         fileName: fileName,
-                        generated: true
+                        generated: true,
+                        usedProfessorParams: {
+                            teamSize: config.teamSize,
+                            minTeams: config.minTeams,
+                            maxTeams: config.maxTeams
+                        }
                     }
                 });
             } catch (jsonError: any) {
@@ -1935,6 +2386,137 @@ activitiesRouter.post("/:id/test-create-groups", verifyTeacher, async (req: Requ
                 activityId: activityId,
                 timestamp: new Date().toISOString()
             }
+        });
+    }
+});
+
+/**
+ * Endpoint de debug sin autenticación para testing del sistema corregido
+ * SOLO PARA DESARROLLO - NO USAR EN PRODUCCIÓN
+ */
+activitiesRouter.post("/:id/debug-no-auth", async (req: Request, res: Response) => {
+    const activityId = req?.params?.id;
+    const frontendData = req.body; 
+
+    console.log(`🧪 [DebugNoAuth] ==========================================`);
+    console.log(`🧪 [DebugNoAuth] TESTING SISTEMA CORREGIDO SIN AUTH`);
+    console.log(`🧪 [DebugNoAuth] Actividad: ${activityId}`);
+    console.log(`🧪 [DebugNoAuth] Datos del frontend:`, frontendData);
+    console.log(`🧪 [DebugNoAuth] ==========================================`);
+
+    try {
+        // 1. Verificar actividad
+        const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
+        if (!activity) {
+            return res.status(404).send({ message: "Activity not found" });
+        }
+
+        // 2. Procesar igual que el endpoint principal
+        const { algorithmData, selectedStudentIds, groupConfigurations, restrictions } = frontendData;
+        
+        if (!algorithmData || !selectedStudentIds) {
+            return res.status(400).send({
+                message: "No algorithm data or selected students received from frontend"
+            });
+        }
+
+        console.log(`✅ [DebugNoAuth] Datos recibidos: ${selectedStudentIds.length} estudiantes seleccionados`);
+
+        // 3. Obtener estudiantes con BELBIN usando los IDs seleccionados
+        const selectedStudents = await collections.users?.find({
+            _id: { $in: selectedStudentIds.map((id: string) => new ObjectId(id)) }
+        }).toArray();
+
+        if (!selectedStudents || selectedStudents.length === 0) {
+            return res.status(400).send({ message: "Selected students not found" });
+        }
+
+        // 4. Obtener traits BELBIN de los estudiantes seleccionados
+        const belbinQuestionnaireId = "6718b2263e29ad19c0e0c61f";
+        const membersWithTraits = selectedStudents.map(student => {
+            const belbinQuestionnaire = student.askedQuestionnaires?.find(aq => 
+                aq.questionnaire.toString() === belbinQuestionnaireId && aq.result
+            );
+
+            const primaryTrait = belbinQuestionnaire?.result || "";
+            const traits = primaryTrait ? [primaryTrait] : [];
+
+            console.log(`📝 [DebugNoAuth] Estudiante ${student.email}: traits=${traits.join(', ')}`);
+
+            return { traits: traits };
+        });
+
+        // 5. Construir algorithmData correcto
+        const processedAlgorithmData = { 
+            ...algorithmData,
+            number_members: membersWithTraits.length,
+            members: membersWithTraits
+        };
+        
+        console.log(`✅ [DebugNoAuth] AlgorithmData corregido:`);
+        console.log(`📊 [DebugNoAuth] - Miembros: ${processedAlgorithmData.number_members}`);
+        console.log(`📊 [DebugNoAuth] - Traits obtenidos: ${membersWithTraits.length}`);
+
+        // 6. Procesar restricciones si las hay
+        if (restrictions?.mustNotBeTogether?.length > 0) {
+            const studentIdToIndex = new Map();
+            selectedStudents.forEach((student, index) => {
+                studentIdToIndex.set(student._id.toString(), index);
+            });
+
+            restrictions.mustNotBeTogether.forEach((restriction: any[], restrictionIndex: number) => {
+                const memberIndices = restriction
+                    .map(userId => studentIdToIndex.get(userId))
+                    .filter(index => index !== undefined);
+
+                if (memberIndices.length >= 2) {
+                    for (let i = 0; i < memberIndices.length; i++) {
+                        for (let j = i + 1; j < memberIndices.length; j++) {
+                            processedAlgorithmData.constraints.push({
+                                type: "DifferentTeam",
+                                name: `debug_must_not_${restrictionIndex}_${i}_${j}`,
+                                members: [memberIndices[i], memberIndices[j]]
+                            });
+                        }
+                    }
+                    console.log(`✅ [DebugNoAuth] Añadidas restricciones DifferentTeam`);
+                }
+            });
+        }
+
+        // 7. Generar archivo JSON
+        const { saveAlgorithmJSON } = await import("../functions/algorithm-functions");
+        const filePath = await saveAlgorithmJSON(activityId, processedAlgorithmData);
+        
+        if (!filePath) {
+            return res.status(500).send({ message: "Failed to generate JSON file" });
+        }
+
+        console.log(`✅ [DebugNoAuth] Archivo JSON generado: ${filePath}`);
+        
+        return res.status(200).send({
+            success: true,
+            message: 'Debug test completed successfully',
+            data: {
+                activityId: activityId,
+                studentsProcessed: membersWithTraits.length,
+                constraintsGenerated: processedAlgorithmData.constraints.length,
+                traitsFound: membersWithTraits.filter(m => m.traits.length > 0).length,
+                jsonFileGenerated: !!filePath,
+                filePath: filePath,
+                systemInfo: {
+                    debugMode: true,
+                    dataSource: 'frontend_corrected_system'
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error(`💥 [DebugNoAuth] Error:`, error);
+        return res.status(500).send({
+            success: false,
+            message: "Debug test failed",
+            error: error.message
         });
     }
 });

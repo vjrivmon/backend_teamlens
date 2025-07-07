@@ -165,27 +165,29 @@ export const getActivityMembersWithTraits = async (activityId: string): Promise<
 
 /**
  * Genera las constraints básicas para el algoritmo
- * CORREGIDO: Estructura según plantilla Python esperada
+ * CORREGIDO: Usa SIEMPRE los parámetros del profesor, sin cálculos automáticos
  * @param activityId ID de la actividad
  * @param numberOfMembers Número total de miembros
- * @param teamSize Tamaño de cada equipo
- * @param numberOfTeams Número de equipos
+ * @param teamSize Tamaño de cada equipo (del profesor)
+ * @param minTeams Número mínimo de equipos (del profesor)
+ * @param maxTeams Número máximo de equipos (del profesor)
  * @returns AlgorithmConstraint[] Array de constraints
  */
 export const generateBasicConstraints = (
     activityId: string,
     numberOfMembers: number,
     teamSize: number,
-    numberOfTeams: number
+    minTeams: number,
+    maxTeams: number
 ): AlgorithmConstraint[] => {
     console.log(`🔧 [AlgorithmFunctions] Generando constraints básicas para actividad: ${activityId}`);
-    console.log(`📊 [AlgorithmFunctions] Parámetros: ${numberOfMembers} miembros, equipos de ${teamSize}, ${numberOfTeams} equipos`);
+    console.log(`📊 [AlgorithmFunctions] Parámetros del profesor: ${numberOfMembers} miembros, equipos de ${teamSize}, min: ${minTeams}, max: ${maxTeams}`);
 
     const constraints: AlgorithmConstraint[] = [
         {
             type: "AllAssigned",
             name: "",
-            number_members: numberOfMembers  // Total de estudiantes
+            number_members: numberOfMembers // Total de estudiantes
         },
         {
             type: "NonOverlapping",
@@ -194,31 +196,35 @@ export const generateBasicConstraints = (
         {
             type: "SizeCardinality",
             name: "",
-            team_size: teamSize,  // Tamaño de cada equipo
-            min: numberOfTeams,   // Número de equipos a crear
-            max: numberOfTeams    // Número de equipos a crear
+            team_size: teamSize,  // Tamaño de cada equipo (del profesor)
+            min: minTeams,        // Número mínimo de equipos (del profesor)
+            max: maxTeams         // Número máximo de equipos (del profesor)
         }
     ];
 
-    console.log(`✅ [AlgorithmFunctions] ${constraints.length} constraints básicas generadas`);
+    console.log(`✅ [AlgorithmFunctions] ${constraints.length} constraints básicas generadas con parámetros del profesor`);
     return constraints;
 };
 
 /**
  * Genera el archivo JSON completo para el algoritmo
- * CORREGIDO: Estructura según plantilla Python esperada
+ * CORREGIDO: Usa SIEMPRE los parámetros del profesor, sin cálculos automáticos
  * @param activityId ID de la actividad
- * @param teamSize Tamaño deseado de cada equipo
+ * @param teamSize Tamaño deseado de cada equipo (del profesor)
+ * @param minTeams Número mínimo de equipos (del profesor)
+ * @param maxTeams Número máximo de equipos (del profesor)
  * @param customConstraints Constraints adicionales del profesor (opcional)
  * @returns Promise<AlgorithmData | null> Datos del algoritmo o null si hay error
  */
 export const generateAlgorithmJSON = async (
     activityId: string,
     teamSize: number,
+    minTeams: number,
+    maxTeams: number,
     customConstraints: AlgorithmConstraint[] = []
 ): Promise<AlgorithmData | null> => {
     console.log(`🚀 [AlgorithmFunctions] Generando JSON del algoritmo para actividad: ${activityId}`);
-    console.log(`📏 [AlgorithmFunctions] Tamaño de equipo requerido: ${teamSize}`);
+    console.log(`📏 [AlgorithmFunctions] Parámetros del profesor: tamaño=${teamSize}, min=${minTeams}, max=${maxTeams}`);
 
     try {
         // Validar que todos han completado BELBIN
@@ -236,12 +242,11 @@ export const generateAlgorithmJSON = async (
         }
 
         const numberOfMembers = members.length;  // Total de estudiantes
-        const numberOfTeams = Math.ceil(numberOfMembers / teamSize);
 
-        console.log(`🧮 [AlgorithmFunctions] Calculando distribución: ${numberOfMembers} miembros → ${numberOfTeams} equipos`);
+        console.log(`🧮 [AlgorithmFunctions] Distribución: ${numberOfMembers} miembros en ${minTeams}-${maxTeams} equipos de ${teamSize}`);
 
-        // Generar constraints básicas
-        const basicConstraints = generateBasicConstraints(activityId, numberOfMembers, teamSize, numberOfTeams);
+        // Generar constraints básicas usando parámetros del profesor
+        const basicConstraints = generateBasicConstraints(activityId, numberOfMembers, teamSize, minTeams, maxTeams);
         
         // Combinar constraints básicas con customs
         const allConstraints = [...basicConstraints, ...customConstraints];
@@ -258,7 +263,7 @@ export const generateAlgorithmJSON = async (
 
         console.log(`✅ [AlgorithmFunctions] JSON del algoritmo generado exitosamente`);
         console.log(`📋 [AlgorithmFunctions] Resumen: ${members.length} miembros, ${allConstraints.length} constraints`);
-        console.log(`🎯 [AlgorithmFunctions] Estructura corregida: total_estudiantes=${numberOfMembers}, equipo_size=${teamSize}, num_equipos=${numberOfTeams}`);
+        console.log(`🎯 [AlgorithmFunctions] Parámetros del profesor respetados: ${teamSize} por equipo, ${minTeams}-${maxTeams} equipos`);
 
         return algorithmData;
 
@@ -309,21 +314,27 @@ export const saveAlgorithmJSON = async (
 
 /**
  * Función principal que genera y guarda el archivo JSON del algoritmo
+ * CORREGIDO: Usa SIEMPRE los parámetros del profesor
  * @param activityId ID de la actividad
- * @param teamSize Tamaño deseado de cada equipo
+ * @param teamSize Tamaño deseado de cada equipo (del profesor)
+ * @param minTeams Número mínimo de equipos (del profesor)
+ * @param maxTeams Número máximo de equipos (del profesor)
  * @param customConstraints Constraints adicionales del profesor (opcional)
  * @returns Promise<string | null> Ruta del archivo generado o null si hay error
  */
 export const createAlgorithmFileForActivity = async (
     activityId: string,
     teamSize: number,
+    minTeams: number,
+    maxTeams: number,
     customConstraints: AlgorithmConstraint[] = []
 ): Promise<string | null> => {
     console.log(`🎯 [AlgorithmFunctions] INICIO - Creando archivo de algoritmo para actividad: ${activityId}`);
+    console.log(`📊 [AlgorithmFunctions] Parámetros del profesor: tamaño=${teamSize}, min=${minTeams}, max=${maxTeams}`);
 
     try {
         // Generar datos del algoritmo
-        const algorithmData = await generateAlgorithmJSON(activityId, teamSize, customConstraints);
+        const algorithmData = await generateAlgorithmJSON(activityId, teamSize, minTeams, maxTeams, customConstraints);
         
         if (!algorithmData) {
             console.error(`❌ [AlgorithmFunctions] No se pudieron generar los datos del algoritmo`);
@@ -386,8 +397,9 @@ export { AlgorithmData, AlgorithmMember, AlgorithmConstraint };
 /**
  * Regenera automáticamente el archivo JSON cuando cambian los parámetros del algoritmo
  * Esta función es llamada automáticamente cuando se actualiza la configuración
+ * CORREGIDO: Usa SIEMPRE los parámetros del profesor
  * @param activityId ID de la actividad
- * @param newConfig Nueva configuración del algoritmo
+ * @param newConfig Nueva configuración del algoritmo del profesor
  * @returns Promise<boolean> true si se regeneró exitosamente
  */
 export const regenerateAlgorithmFileOnConfigChange = async (
@@ -395,7 +407,7 @@ export const regenerateAlgorithmFileOnConfigChange = async (
     newConfig: any
 ): Promise<boolean> => {
     console.log(`🔄 [AlgorithmRegenerate] Regenerando archivo para actividad: ${activityId}`);
-    console.log(`📋 [AlgorithmRegenerate] Nueva configuración:`, newConfig);
+    console.log(`📋 [AlgorithmRegenerate] Nueva configuración del profesor:`, newConfig);
 
     try {
         // Verificar si todos los estudiantes han completado BELBIN
@@ -403,6 +415,13 @@ export const regenerateAlgorithmFileOnConfigChange = async (
         
         if (!allCompleted) {
             console.log(`⏳ [AlgorithmRegenerate] No todos los estudiantes han completado BELBIN - No se regenera archivo`);
+            return false;
+        }
+
+        // Validar que tenemos todos los parámetros necesarios del profesor
+        if (!newConfig.teamSize || !newConfig.minTeams || !newConfig.maxTeams) {
+            console.log(`❌ [AlgorithmRegenerate] Faltan parámetros obligatorios del profesor`);
+            console.log(`📊 [AlgorithmRegenerate] Recibido: teamSize=${newConfig.teamSize}, minTeams=${newConfig.minTeams}, maxTeams=${newConfig.maxTeams}`);
             return false;
         }
 
@@ -414,15 +433,18 @@ export const regenerateAlgorithmFileOnConfigChange = async (
             }
         }
 
-        // Crear nuevo archivo con la configuración actualizada
+        // Crear nuevo archivo con la configuración exacta del profesor
         const filePath = await createAlgorithmFileForActivity(
             activityId,
             newConfig.teamSize,
+            newConfig.minTeams,
+            newConfig.maxTeams,
             newConfig.additionalConstraints || []
         );
 
         if (filePath) {
             console.log(`✅ [AlgorithmRegenerate] Archivo regenerado exitosamente: ${filePath}`);
+            console.log(`🎯 [AlgorithmRegenerate] Parámetros del profesor aplicados: ${newConfig.teamSize} por equipo, ${newConfig.minTeams}-${newConfig.maxTeams} equipos`);
             return true;
         } else {
             console.log(`❌ [AlgorithmRegenerate] No se pudo regenerar el archivo`);
@@ -454,7 +476,8 @@ export interface ValidationResult {
         totalStudents: number;
         completedBelbin: number;
         teamSize: number | null;
-        estimatedTeams: number | null;
+        minTeams: number | null;
+        maxTeams: number | null;
         algorithmStatus: string;
         configuredAt: string | null;
     };
@@ -584,7 +607,8 @@ export const performCompleteValidation = async (activityId: string): Promise<Val
                 totalStudents,
                 completedBelbin,
                 teamSize,
-                estimatedTeams: teamSize ? Math.ceil(totalStudents / teamSize) : null,
+                minTeams: algorithmConfig?.minTeams || null,
+                maxTeams: algorithmConfig?.maxTeams || null,
                 algorithmStatus: activity.algorithmStatus || 'not-configured',
                 configuredAt: algorithmConfig?.lastConfiguredAt?.toISOString() || null
             },

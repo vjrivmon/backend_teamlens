@@ -6,6 +6,7 @@ import bcrypt from "bcrypt";
 import jwt, { SignOptions } from "jsonwebtoken";
 
 import emailService from "../services/email.service";
+import { ObjectId } from "mongodb";
 
 export const authRouter = express.Router();
 
@@ -227,4 +228,68 @@ authRouter.post("/reset-password", async (req: Request, res: Response) => {
         });
     }
 
+});
+
+/**
+ * ENDPOINT TEMPORAL: Cambiar rol del usuario actual a teacher
+ * @route PATCH /auth/promote-to-teacher
+ * @desc Cambia el rol del usuario autenticado a 'teacher'
+ */
+authRouter.patch("/promote-to-teacher", async (req: Request, res: Response) => {
+    try {
+        const authUserId = (req.session as any)?.authuser;
+        
+        console.log(`🔧 [PromoteTeacher] Promoviendo usuario a teacher: ${authUserId}`);
+        
+        if (!authUserId) {
+            return res.status(401).send({
+                message: "No authenticated user found"
+            });
+        }
+
+        // Buscar y actualizar el usuario
+        const result = await collections.users?.updateOne(
+            { _id: new ObjectId(authUserId) },
+            { 
+                $set: { 
+                    role: 'teacher',
+                    updatedAt: new Date()
+                } 
+            }
+        );
+
+        if (!result || result.matchedCount === 0) {
+            return res.status(404).send({
+                message: "User not found"
+            });
+        }
+
+        // Obtener el usuario actualizado
+        const updatedUser = await collections.users?.findOne({ 
+            _id: new ObjectId(authUserId) 
+        });
+
+        console.log(`✅ [PromoteTeacher] Usuario promovido exitosamente:`, {
+            id: updatedUser?._id,
+            email: updatedUser?.email,
+            name: updatedUser?.name,
+            role: updatedUser?.role
+        });
+
+        return res.status(200).send({
+            message: "User role updated to teacher successfully",
+            user: {
+                id: updatedUser?._id,
+                email: updatedUser?.email,
+                name: updatedUser?.name,
+                role: updatedUser?.role
+            }
+        });
+
+    } catch (error: any) {
+        console.error('💥 [PromoteTeacher] Error promoting user to teacher:', error);
+        return res.status(500).send({
+            message: "Internal server error updating user role"
+        });
+    }
 });

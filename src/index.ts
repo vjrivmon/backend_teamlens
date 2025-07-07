@@ -7,6 +7,7 @@ import { usersRouter } from "./routes/user.router";
 import { activitiesRouter } from "./routes/activity.router";
 import { questionnairesRouter } from './routes/questionnaires.router';
 import { authRouter } from './routes/auth.router';
+import { debugRouter } from './routes/debug.router';
 
 const app = express();
 const PORT = 3000;
@@ -27,6 +28,10 @@ app.get('/health', (_req, res) => {
 connectToDatabase()
     .then(() => {
         
+        // Router sin autenticación para debug (SOLO DESARROLLO)
+        app.use("/debug", debugRouter);
+        
+        // Routers con autenticación
         app.use("/users", verifyToken, usersRouter);
         app.use("/activities", verifyToken, activitiesRouter);
         app.use("/questionnaires", verifyToken, questionnairesRouter);

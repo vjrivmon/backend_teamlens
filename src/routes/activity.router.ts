@@ -2,7 +2,7 @@ import express, { Request, Response } from "express";
 
 import { ObjectId } from "mongodb";
 import { collections } from "../services/database.service";
-import Activity from "../models/activity";
+import Activity, { AlgorithmConfig } from "../models/activity";
 
 import { groupsRouter } from "./groups.router";
 import { handleActivityStudentsRouter } from "./handle-activity-students.router";
@@ -14,6 +14,18 @@ import path from 'path';
 import Group from "../models/group";
 import { addUserNotification } from "../functions/user-functions";
 import emailService from "../services/email.service";
+
+// Importar funciones del algoritmo dinámico
+import { 
+    createAlgorithmFileForActivity,
+    validateAllStudentsCompletedBelbin,
+    algorithmFileExists,
+    deleteAlgorithmFile,
+    generateAlgorithmFileName,
+    handleActivityChange,
+    performCompleteValidation,
+    ValidationResult
+} from "../functions/algorithm-functions";
 
 export const activitiesRouter = express.Router();
 
@@ -167,6 +179,260 @@ activitiesRouter.delete("/:id", verifyTeacher, async (req: Request, res: Respons
     }
 });
 
+/**
+ * Endpoint para configurar los parámetros del algoritmo de formación de equipos
+ * @route PUT /activities/:id/algorithm/config
+ * @param {string} id - ID de la actividad
+ * @body {AlgorithmConfig} Configuración del algoritmo
+ * @returns {Object} Resultado de la configuración
+ */
+activitiesRouter.put("/:id/algorithm/config", verifyTeacher, async (req: Request, res: Response) => {
+    const activityId = req?.params?.id;
+    const algorithmConfig: AlgorithmConfig = req.body;
+
+    console.log(`🔧 [AlgorithmConfig] Configurando algoritmo para actividad: ${activityId}`);
+    console.log(`📋 [AlgorithmConfig] Configuración recibida:`, algorithmConfig);
+
+    try {
+        // Validar que la actividad existe y pertenece al profesor
+        const activity = await collections.activities?.findOne({ 
+            _id: new ObjectId(activityId),
+            teacher: new ObjectId(req.session?.authuser as string)
+        });
+
+        if (!activity) {
+            return res.status(404).send({
+                message: `Activity ${activityId} not found or you don't have permission`
+            });
+        }
+
+        // Validaciones básicas de configuración
+        if (!algorithmConfig.teamSize || algorithmConfig.teamSize < 2) {
+            return res.status(400).send({
+                message: "Team size must be at least 2 students"
+            });
+        }
+
+        const totalStudents = activity.students?.length || 0;
+        if (totalStudents === 0) {
+            return res.status(400).send({
+                message: "Cannot configure algorithm: no students assigned to this activity"
+            });
+        }
+
+        if (algorithmConfig.teamSize > totalStudents) {
+            return res.status(400).send({
+                message: `Team size (${algorithmConfig.teamSize}) cannot be larger than total students (${totalStudents})`
+            });
+        }
+
+        // Configurar valores por defecto
+        const config: AlgorithmConfig = {
+            teamSize: algorithmConfig.teamSize,
+            minTeams: algorithmConfig.minTeams || Math.floor(totalStudents / algorithmConfig.teamSize),
+            maxTeams: algorithmConfig.maxTeams || Math.ceil(totalStudents / algorithmConfig.teamSize),
+            exclusions: algorithmConfig.exclusions || [],
+            inclusions: algorithmConfig.inclusions || [],
+            additionalConstraints: algorithmConfig.additionalConstraints || [],
+            aggFunc: algorithmConfig.aggFunc || "sum",
+            problemType: algorithmConfig.problemType || "TraitTeamFormation",
+            isConfigured: true,
+            lastConfiguredAt: new Date()
+        };
+
+        console.log(`📊 [AlgorithmConfig] Configuración calculada:`, config);
+
+        // Verificar si todos los estudiantes han completado BELBIN
+        const allCompleted = await validateAllStudentsCompletedBelbin(activityId);
+        
+        let algorithmStatus = 'configured';
+        let canGenerateFile = false;
+
+        if (allCompleted) {
+            algorithmStatus = 'ready';
+            canGenerateFile = true;
+            console.log(`✅ [AlgorithmConfig] Todos los estudiantes han completado BELBIN - Estado: ready`);
+        } else {
+            console.log(`⏳ [AlgorithmConfig] Algunos estudiantes aún no han completado BELBIN - Estado: configured`);
+        }
+
+        // Actualizar la actividad con la nueva configuración
+        const updateResult = await collections.activities?.updateOne(
+            { _id: new ObjectId(activityId) },
+            {
+                $set: {
+                    algorithmConfig: config,
+                    algorithmStatus: algorithmStatus,
+                    updatedAt: new Date()
+                }
+            }
+        );
+
+        if (!updateResult?.matchedCount) {
+            return res.status(500).send({
+                message: "Failed to update activity configuration"
+            });
+        }
+
+        console.log(`💾 [AlgorithmConfig] Configuración guardada exitosamente`);
+
+        // 🔥 SISTEMA DE ESCUCHA DE CAMBIOS: Notificar cambio de configuración
+        console.log(`🔔 [AlgorithmConfig] Activando sistema de escucha de cambios...`);
+        await handleActivityChange(activityId, 'config-update', {
+            newConfig: config,
+            previousConfig: activity.algorithmConfig,
+            configuredBy: req.session?.authuser,
+            configuredAt: new Date().toISOString()
+        });
+
+        // Verificar si se generó archivo después del cambio
+        const fileGeneratedAfterChange = algorithmFileExists(activityId);
+        let filePath = null;
+
+        if (fileGeneratedAfterChange) {
+            filePath = generateAlgorithmFileName(activityId);
+            console.log(`✅ [AlgorithmConfig] Archivo JSON generado por sistema de escucha: ${filePath}`);
+        } else {
+            console.log(`⏳ [AlgorithmConfig] Archivo JSON no generado - Esperando completitud BELBIN`);
+        }
+
+        // Respuesta exitosa con información del nuevo sistema
+        return res.status(200).send({
+            message: "Algorithm configuration updated successfully",
+            data: {
+                activityId: activityId,
+                algorithmConfig: config,
+                algorithmStatus: algorithmStatus,
+                allStudentsCompletedBelbin: allCompleted,
+                totalStudents: totalStudents,
+                estimatedTeams: Math.ceil(totalStudents / config.teamSize),
+                fileGenerated: fileGeneratedAfterChange,
+                filePath: filePath,
+                canRunAlgorithm: algorithmStatus === 'ready' && fileGeneratedAfterChange,
+                configuredAt: config.lastConfiguredAt?.toISOString(),
+                systemInfo: {
+                    changeListenerActivated: true,
+                    autoFileGeneration: fileGeneratedAfterChange,
+                    nextSteps: allCompleted ? 
+                        ["Algorithm ready to execute"] : 
+                        [`${totalStudents - (allCompleted ? totalStudents : 0)} students need to complete BELBIN test`]
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error(`💥 [AlgorithmConfig] Error configurando algoritmo:`, error);
+        return res.status(500).send({
+            message: "Internal server error configuring algorithm",
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Endpoint para obtener la configuración actual del algoritmo
+ * @route GET /activities/:id/algorithm/config
+ * @param {string} id - ID de la actividad
+ * @returns {Object} Configuración actual del algoritmo
+ */
+activitiesRouter.get("/:id/algorithm/config", verifyTeacher, async (req: Request, res: Response) => {
+    const activityId = req?.params?.id;
+
+    try {
+        const activity = await collections.activities?.findOne({ 
+            _id: new ObjectId(activityId),
+            teacher: new ObjectId(req.session?.authuser as string)
+        });
+
+        if (!activity) {
+            return res.status(404).send({
+                message: `Activity ${activityId} not found or you don't have permission`
+            });
+        }
+
+        const allCompleted = await validateAllStudentsCompletedBelbin(activityId);
+        const fileExists = algorithmFileExists(activityId);
+        const totalStudents = activity.students?.length || 0;
+
+        return res.status(200).send({
+            data: {
+                activityId: activityId,
+                activityTitle: activity.title,
+                algorithmConfig: activity.algorithmConfig || null,
+                algorithmStatus: activity.algorithmStatus || 'not-configured',
+                allStudentsCompletedBelbin: allCompleted,
+                totalStudents: totalStudents,
+                fileExists: fileExists,
+                fileName: fileExists ? generateAlgorithmFileName(activityId) : null,
+                canRunAlgorithm: activity.algorithmStatus === 'ready' && fileExists,
+                estimatedTeams: activity.algorithmConfig?.teamSize ? 
+                    Math.ceil(totalStudents / activity.algorithmConfig.teamSize) : null
+            }
+        });
+
+    } catch (error: any) {
+        console.error(`💥 [AlgorithmConfig] Error obteniendo configuración:`, error);
+        return res.status(500).send({
+            message: "Internal server error getting algorithm configuration",
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Endpoint mejorado para validación completa del algoritmo usando el nuevo sistema
+ * @route GET /activities/:id/algorithm/validation
+ * @param {string} id - ID de la actividad
+ * @returns {ValidationResult} Estado de validación detallado con recomendaciones
+ */
+activitiesRouter.get("/:id/algorithm/validation", verifyTeacher, async (req: Request, res: Response) => {
+    const activityId = req?.params?.id;
+
+    console.log(`🔍 [AlgorithmValidation] Iniciando validación completa para actividad: ${activityId}`);
+
+    try {
+        // Validar que la actividad existe y pertenece al profesor
+        const activity = await collections.activities?.findOne({ 
+            _id: new ObjectId(activityId),
+            teacher: new ObjectId(req.session?.authuser as string)
+        });
+
+        if (!activity) {
+            return res.status(404).send({
+                message: `Activity ${activityId} not found or you don't have permission`
+            });
+        }
+
+        // Usar el nuevo sistema de validación completa
+        const validationResult: ValidationResult = await performCompleteValidation(activityId);
+
+        console.log(`✅ [AlgorithmValidation] Validación completada para actividad: ${activityId}`);
+        console.log(`📊 [AlgorithmValidation] Estado: ${validationResult.isValid ? 'VÁLIDO' : 'REQUIERE ATENCIÓN'}`);
+
+        return res.status(200).send({
+            data: {
+                activityId: activityId,
+                activityTitle: activity.title,
+                ...validationResult,
+                systemInfo: {
+                    validationVersion: "2.0",
+                    completedAt: new Date().toISOString(),
+                    changeListenerActive: true,
+                    autoRegenerationEnabled: activity.algorithmConfig?.isConfigured || false
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error(`💥 [AlgorithmValidation] Error en validación completa:`, error);
+        return res.status(500).send({
+            message: "Internal server error performing complete validation",
+            error: error.message,
+            activityId: activityId
+        });
+    }
+});
+
 
 // Tarea y cola para gestionar las peticiones al algoritmo
 
@@ -174,103 +440,404 @@ const MAX_WORKERS = 10;
 let activeWorkers = 0;
 const taskQueue: any[] = [];
 
-activitiesRouter.post("/:id/create-algorithm", verifyTeacher, async (req: Request, res: Response) => {
+/**
+ * Endpoint para ejecutar el algoritmo de formación de equipos usando el sistema dinámico
+ * @route POST /activities/:id/algorithm/execute
+ * @param {string} id - ID de la actividad
+ * @returns {Object} Estado de la ejecución del algoritmo
+ */
+activitiesRouter.post("/:id/algorithm/execute", verifyTeacher, async (req: Request, res: Response) => {
+    const activityId = req?.params?.id;
 
-    const id = req?.params?.id;
-
-    console.log(req.body);
-
-    const data = {
-        activityId: id,
-        algorithmData: { ...req.body }
-    };
-
-    console.log(data);
+    console.log(`🚀 [AlgorithmExecute] ==========================================`);
+    console.log(`🚀 [AlgorithmExecute] INICIANDO EJECUCIÓN DE ALGORITMO`);
+    console.log(`🚀 [AlgorithmExecute] Actividad: ${activityId}`);
+    console.log(`🚀 [AlgorithmExecute] Profesor: ${(req.session as any)?.authuser}`);
+    console.log(`🚀 [AlgorithmExecute] Timestamp: ${new Date().toISOString()}`);
+    console.log(`🚀 [AlgorithmExecute] ==========================================`);
 
     try {
-
-        if (activeWorkers < MAX_WORKERS) {
-            startAlgorithmWorker(data);
-        } else {
-            taskQueue.push(data);
-        }
-
-        await collections.activities?.updateOne({ _id: new ObjectId(id) }, {
-            $set: { algorithmStatus: 'running' }
+        // 1. Validar que la actividad existe y pertenece al profesor
+        console.log(`🔍 [AlgorithmExecute] Paso 1: Validando actividad...`);
+        const activity = await collections.activities?.findOne({
+            _id: new ObjectId(activityId),
+            teacher: new ObjectId((req.session as any)?.authuser)
         });
 
-        res.status(200).send({
-            message: 'Tarea iniciada en segundo plano'
+        if (!activity) {
+            console.log(`❌ [AlgorithmExecute] Actividad no encontrada o acceso denegado`);
+            return res.status(404).send({
+                message: `Activity ${activityId} not found or you don't have permission`
+            });
+        }
+
+        console.log(`✅ [AlgorithmExecute] Actividad validada: "${activity.title}"`);
+        console.log(`📊 [AlgorithmExecute] Estudiantes en actividad: ${activity.students?.length || 0}`);
+        console.log(`🔧 [AlgorithmExecute] Estado actual: ${activity.algorithmStatus || 'not-configured'}`);
+        console.log(`⚙️ [AlgorithmExecute] Config: ${JSON.stringify(activity.algorithmConfig || {})}`);
+
+        // 2. Verificar que el algoritmo está configurado
+        console.log(`🔍 [AlgorithmExecute] Paso 2: Verificando configuración...`);
+        if (!activity.algorithmConfig?.isConfigured) {
+            console.log(`❌ [AlgorithmExecute] Algoritmo no configurado`);
+            return res.status(400).send({
+                message: "Algorithm is not configured for this activity. Please configure it first.",
+                details: {
+                    hasConfig: !!activity.algorithmConfig,
+                    isConfigured: activity.algorithmConfig?.isConfigured || false
+                }
+            });
+        }
+
+        console.log(`✅ [AlgorithmExecute] Configuración válida`);
+
+        // 3. Verificar que todos los estudiantes han completado BELBIN
+        console.log(`🔍 [AlgorithmExecute] Paso 3: Verificando completitud BELBIN...`);
+        const allCompleted = await validateAllStudentsCompletedBelbin(activityId);
+        console.log(`📊 [AlgorithmExecute] BELBIN completitud: ${allCompleted}`);
+
+        if (!allCompleted) {
+            console.log(`❌ [AlgorithmExecute] No todos los estudiantes han completado BELBIN`);
+            
+            // Obtener más detalles sobre qué estudiantes faltan
+            const students = await collections.users?.find({
+                _id: { $in: activity.students || [] }
+            }).toArray();
+
+            const belbinQuestionnaireId = "6718b2263e29ad19c0e0c61f";
+            const studentsWithoutBelbin = students?.filter(student => {
+                return !student.askedQuestionnaires?.some(q => 
+                    q.questionnaire.toString() === belbinQuestionnaireId && q.result
+                );
+            }) || [];
+
+            console.log(`📋 [AlgorithmExecute] Estudiantes sin BELBIN: ${studentsWithoutBelbin.length}/${students?.length || 0}`);
+            console.log(`👥 [AlgorithmExecute] Emails sin BELBIN:`, studentsWithoutBelbin.map(s => s.email));
+
+            return res.status(400).send({
+                message: "Cannot execute algorithm: not all students have completed BELBIN test",
+                details: {
+                    totalStudents: students?.length || 0,
+                    studentsWithoutBelbin: studentsWithoutBelbin.length,
+                    missingStudents: studentsWithoutBelbin.map(s => ({ id: s._id, email: s.email, name: s.name }))
+                }
+            });
+        }
+
+        console.log(`✅ [AlgorithmExecute] Todos los estudiantes han completado BELBIN`);
+
+        // 4. Verificar/crear archivo JSON del algoritmo
+        console.log(`🔍 [AlgorithmExecute] Paso 4: Verificando archivo JSON del algoritmo...`);
+        let fileExists = await algorithmFileExists(activityId);
+        console.log(`📂 [AlgorithmExecute] Archivo JSON existe: ${fileExists}`);
+
+        if (!fileExists) {
+            console.log(`🔧 [AlgorithmExecute] Generando archivo JSON del algoritmo...`);
+            try {
+                const { createAlgorithmFileForActivity } = await import("../functions/algorithm-functions");
+                const teamSize = activity.algorithmConfig?.teamSize || 4;
+                const jsonResult = await createAlgorithmFileForActivity(activityId, teamSize);
+                console.log(`✅ [AlgorithmExecute] Archivo JSON generado: ${jsonResult}`);
+                fileExists = true;
+            } catch (jsonError: any) {
+                console.log(`❌ [AlgorithmExecute] Error generando archivo JSON:`, jsonError);
+                return res.status(500).send({
+                    message: "Failed to generate algorithm JSON file",
+                    error: jsonError.message
+                });
+            }
+        }
+
+        // 5. Verificar que el algoritmo no está ya ejecutándose
+        console.log(`🔍 [AlgorithmExecute] Paso 5: Verificando estado de ejecución...`);
+        if (activity.algorithmStatus === 'running') {
+            console.log(`⚠️ [AlgorithmExecute] Algoritmo ya en ejecución`);
+            return res.status(409).send({
+                message: "Algorithm is already running for this activity",
+                status: activity.algorithmStatus
+            });
+        }
+
+        console.log(`✅ [AlgorithmExecute] Todas las validaciones pasadas`);
+
+        // 6. Preparar datos para el worker
+        console.log(`🔍 [AlgorithmExecute] Paso 6: Preparando datos del worker...`);
+        const workerData = {
+            activityId: activityId,
+            teamSize: activity.algorithmConfig?.teamSize || 4,
+            customConstraints: activity.algorithmConfig?.additionalConstraints || []
+        };
+
+        console.log(`📋 [AlgorithmExecute] Datos del worker:`, workerData);
+
+        // 7. Enviar notificación de inicio
+        console.log(`🔍 [AlgorithmExecute] Paso 7: Enviando notificación de inicio...`);
+        try {
+            await addUserNotification(new ObjectId(activity.teacher), {
+                title: '🚀 Algoritmo de formación iniciado',
+                description: `El algoritmo de formación de equipos ha comenzado para la actividad "${activity.title}". Tiempo estimado: ${estimateExecutionTime(activity.students?.length || 0)} minutos.`,
+                link: `/activities/${activityId}`
+            });
+            console.log(`✅ [AlgorithmExecute] Notificación enviada`);
+        } catch (notifError: any) {
+            console.log(`⚠️ [AlgorithmExecute] Error enviando notificación:`, notifError);
+            // No fallar por esto, continuar
+        }
+
+        // 8. Actualizar estado a 'running'
+        console.log(`🔍 [AlgorithmExecute] Paso 8: Actualizando estado a 'running'...`);
+        await collections.activities?.updateOne(
+            { _id: new ObjectId(activityId) },
+            {
+                $set: {
+                    algorithmStatus: 'running',
+                    updatedAt: new Date()
+                }
+            }
+        );
+
+        console.log(`✅ [AlgorithmExecute] Estado actualizado a 'running'`);
+
+        // 9. Ejecutar algoritmo en worker
+        console.log(`🔍 [AlgorithmExecute] Paso 9: Iniciando worker...`);
+        console.log(`👷 [AlgorithmExecute] Workers activos: ${activeWorkers}/${MAX_WORKERS}`);
+
+        if (activeWorkers < MAX_WORKERS) {
+            console.log(`🚀 [AlgorithmExecute] Iniciando worker inmediatamente`);
+            startAlgorithmWorker(workerData);
+        } else {
+            console.log(`⏳ [AlgorithmExecute] Añadiendo a cola - Posición: ${taskQueue.length + 1}`);
+            taskQueue.push(workerData);
+        }
+
+        console.log(`🚀 [AlgorithmExecute] ==========================================`);
+        console.log(`🚀 [AlgorithmExecute] ALGORITMO INICIADO EXITOSAMENTE`);
+        console.log(`🚀 [AlgorithmExecute] Actividad: "${activity.title}"`);
+        console.log(`🚀 [AlgorithmExecute] Estudiantes: ${activity.students?.length || 0}`);
+        console.log(`🚀 [AlgorithmExecute] Tiempo estimado: ${estimateExecutionTime(activity.students?.length || 0)} min`);
+        console.log(`🚀 [AlgorithmExecute] Estado: running`);
+        console.log(`🚀 [AlgorithmExecute] ==========================================`);
+
+        return res.status(200).send({
+            success: true,
+            message: 'Algorithm execution started successfully',
+            data: {
+                activityId: activityId,
+                activityTitle: activity.title,
+                algorithmStatus: 'running',
+                estimatedTime: estimateExecutionTime(activity.students?.length || 0),
+                queuePosition: activeWorkers >= MAX_WORKERS ? taskQueue.length : 0,
+                startedAt: new Date().toISOString(),
+                studentsCount: activity.students?.length || 0,
+                teamSize: activity.algorithmConfig?.teamSize || 4
+            }
         });
 
     } catch (error: any) {
-        res.status(500).send({
-            message: error.message
+        console.log(`💥 [AlgorithmExecute] ==========================================`);
+        console.log(`💥 [AlgorithmExecute] ERROR CRÍTICO EN EJECUCIÓN`);
+        console.log(`💥 [AlgorithmExecute] Actividad: ${activityId}`);
+        console.log(`💥 [AlgorithmExecute] Error: ${error.message}`);
+        console.log(`💥 [AlgorithmExecute] Stack: ${error.stack}`);
+        console.log(`💥 [AlgorithmExecute] ==========================================`);
+
+        // Actualizar estado a error
+        try {
+            await collections.activities?.updateOne(
+                { _id: new ObjectId(activityId) },
+                {
+                    $set: {
+                        algorithmStatus: 'error',
+                        updatedAt: new Date()
+                    }
+                }
+            );
+            console.log(`🔧 [AlgorithmExecute] Estado actualizado a 'error'`);
+        } catch (updateError: any) {
+            console.error(`💥 [AlgorithmExecute] Error adicional actualizando estado:`, updateError);
+        }
+
+        return res.status(500).send({
+            success: false,
+            message: "Internal server error executing algorithm",
+            error: error.message,
+            details: {
+                activityId: activityId,
+                timestamp: new Date().toISOString(),
+                stage: "execution"
+            }
         });
     }
-
 });
 
-const startAlgorithmWorker = (data: any) => {
+/**
+ * Endpoint legado para compatibilidad con el sistema anterior
+ * @deprecated Usar /algorithm/execute en su lugar
+ */
+activitiesRouter.post("/:id/create-algorithm", verifyTeacher, async (req: Request, res: Response) => {
+    console.log(`⚠️ [DeprecatedEndpoint] Uso de endpoint legado /create-algorithm para actividad: ${req.params.id}`);
+    
+    // Devolver mensaje de deprecación indicando el nuevo endpoint
+    return res.status(410).send({
+        message: "This endpoint is deprecated. Please use POST /activities/:id/algorithm/execute instead.",
+        deprecatedEndpoint: "/create-algorithm",
+        newEndpoint: "/algorithm/execute",
+        migrationNote: "Update your client to use the new endpoint for algorithm execution."
+    });
+});
 
+/**
+ * Estima el tiempo de ejecución del algoritmo basado en el número de estudiantes
+ * @param {number} studentCount - Número de estudiantes
+ * @returns {number} Tiempo estimado en minutos
+ */
+const estimateExecutionTime = (studentCount: number): number => {
+    if (studentCount <= 10) return 1;
+    if (studentCount <= 20) return 2;
+    if (studentCount <= 30) return 3;
+    if (studentCount <= 50) return 5;
+    return Math.ceil(studentCount / 10); // 1 minuto por cada 10 estudiantes aprox
+};
+
+/**
+ * Inicia un worker para ejecutar el algoritmo de formación de equipos
+ * @param {Object} workerData - Datos para el worker (activityId, teamSize, customConstraints)
+ */
+const startAlgorithmWorker = (workerData: any) => {
     activeWorkers++;
 
-    const worker = new Worker(path.join(__dirname, '../scripts/algorithm-req-worker.js'), { workerData: data });
+    const { activityId } = workerData;
+    console.log(`👷 [AlgorithmWorker] Iniciando worker para actividad: ${activityId}`);
 
-    worker.on('message', async (algorithmResult) => {
+    const worker = new Worker(path.join(__dirname, '../scripts/algorithm-req-worker.js'), { workerData });
 
-
-        const { activityId } = data;
-        console.log(`Mensaje del trabajador: ${algorithmResult}`, activityId);
+    worker.on('message', async (workerResult) => {
+        console.log(`📨 [AlgorithmWorker] Mensaje recibido del worker para actividad: ${activityId}`);
+        console.log(`📋 [AlgorithmWorker] Resultado:`, workerResult);
 
         try {
+            if (workerResult.success) {
+                // Algoritmo ejecutado exitosamente
+                console.log(`✅ [AlgorithmWorker] Algoritmo exitoso para actividad: ${activityId}`);
 
-            await collections.activities?.updateOne({ _id: new ObjectId(activityId as string) }, {
-                $set: { algorithmStatus: 'done' }
-            });
-    
-            const teams = JSON.parse(algorithmResult);
-    
-            console.log(teams);
+                // Actualizar estado de la actividad
+                await collections.activities?.updateOne({ _id: new ObjectId(activityId) }, {
+                    $set: { 
+                        algorithmStatus: 'done',
+                        algorithmResult: workerResult,
+                        updatedAt: new Date()
+                    }
+                });
+
+                // Procesar los resultados y crear grupos
+                const teams = JSON.parse(workerResult.result);
+                console.log(`👥 [AlgorithmWorker] Creando ${teams.length} grupos para actividad: ${activityId}`);
+
+                // Crear grupos basados en los resultados del algoritmo
+                const groupCreationPromises = teams.map(async (team: any, index: number) => {
+                    try {
+                        const groupName = `Equipo ${index + 1}`;
+                        console.log(`🏗️ [AlgorithmWorker] Creando grupo: ${groupName} con ${team.length} estudiantes`);
+                        
+                        await createGroup(activityId, {
+                            name: groupName,
+                            students: team
+                        } as Group);
+                        
+                        console.log(`✅ [AlgorithmWorker] Grupo creado: ${groupName}`);
+                    } catch (groupError: any) {
+                        console.error(`💥 [AlgorithmWorker] Error creando grupo ${index + 1}:`, groupError);
+                    }
+                });
+
+                // Esperar a que se creen todos los grupos
+                await Promise.all(groupCreationPromises);
+
+                // Obtener información de la actividad para notificación
+                const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
+
+                // Enviar notificación de finalización exitosa
+                await addUserNotification(new ObjectId(activity?.teacher), {
+                    title: '🎉 Algoritmo de formación completado',
+                    description: `El algoritmo ha creado ${teams.length} equipos exitosamente para la actividad "${activity?.title}". ¡Revisa los resultados!`,
+                    link: `/activities/${activityId}`
+                });
+
+                console.log(`🎉 [AlgorithmWorker] Proceso completado exitosamente para actividad: ${activityId}`);
+
+            } else {
+                // Error en el algoritmo
+                console.error(`❌ [AlgorithmWorker] Error en algoritmo para actividad: ${activityId}`);
+                console.error(`💥 [AlgorithmWorker] Error details:`, workerResult.error);
+
+                // Actualizar estado de error
+                await collections.activities?.updateOne({ _id: new ObjectId(activityId) }, {
+                    $set: { 
+                        algorithmStatus: 'error',
+                        algorithmResult: workerResult,
+                        updatedAt: new Date()
+                    }
+                });
+
+                // Obtener información de la actividad para notificación
+                const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
+
+                // Enviar notificación de error
+                await addUserNotification(new ObjectId(activity?.teacher), {
+                    title: '❌ Error en algoritmo de formación',
+                    description: `Hubo un error ejecutando el algoritmo para la actividad "${activity?.title}". Error: ${workerResult.error}`,
+                    link: `/activities/${activityId}`
+                });
+            }
+
+        } catch (error: any) {
+            console.error(`💥 [AlgorithmWorker] Error crítico procesando resultado:`, error);
             
-            teams.forEach(async (team: any, index: any) => {
-                try {
-                    await createGroup(activityId, {
-                        name: 'Grupo ' + (index + 1),
-                        students: team
-                    } as Group);
-                } catch (error: any) {
-                    console.error(error);
-                }                
+            // Actualizar estado de error crítico
+            await collections.activities?.updateOne({ _id: new ObjectId(activityId) }, {
+                $set: { 
+                    algorithmStatus: 'error',
+                    updatedAt: new Date()
+                }
             });
-    
-            const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId as string) });
-    
+
+            // Obtener información de la actividad para notificación
+            const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
+
+            // Enviar notificación de error crítico
             await addUserNotification(new ObjectId(activity?.teacher), {
-                title: 'Algoritmo de agrupación finalizado',
-                description: `El algoritmo de agrupación ha finalizado para la actividad ${activity?.title}`,
+                title: '💥 Error crítico en algoritmo',
+                description: `Error crítico procesando resultado del algoritmo para "${activity?.title}". Contacta al administrador.`,
                 link: `/activities/${activityId}`
             });
+        }
+    });
 
-            console.log(algorithmResult);
-            
-        } catch (error: any) {
-            console.log(error);
-            throw new Error(error);
-        }        
-
+    worker.on('error', async (workerError) => {
+        console.error(`💥 [AlgorithmWorker] Error en worker para actividad: ${activityId}`, workerError);
+        
+        // Actualizar estado de error
+        await collections.activities?.updateOne({ _id: new ObjectId(activityId) }, {
+            $set: { 
+                algorithmStatus: 'error',
+                updatedAt: new Date()
+            }
+        });
     });
 
     worker.on('exit', (code) => {
-
         activeWorkers--;
+        console.log(`🚪 [AlgorithmWorker] Worker terminado para actividad: ${activityId} con código: ${code}`);
 
+        // Procesar siguiente tarea en cola
         if (taskQueue.length > 0) {
             const nextTask = taskQueue.shift();
+            console.log(`⏭️ [AlgorithmWorker] Procesando siguiente tarea en cola: ${nextTask.activityId}`);
             startAlgorithmWorker(nextTask);
         }
+
         if (code !== 0) {
-            console.error(`El trabajador se detuvo con el código de salida ${code}`);
+            console.error(`⚠️ [AlgorithmWorker] Worker terminó con código de error: ${code}`);
         }
     });
 };
@@ -553,3 +1120,823 @@ activitiesRouter.get("/:activityId/students/:studentId/questionnaire/:questionna
 activitiesRouter.use("/:activityId/groups", groupsRouter);
 
 activitiesRouter.use("/:activityId/students", handleActivityStudentsRouter);
+
+/**
+ * Endpoint para generar preview/borrador de resultados del algoritmo
+ * Permite al profesor ver una simulación de la formación de equipos antes de ejecutar
+ * @route GET /activities/:id/algorithm/preview
+ * @param {string} id - ID de la actividad
+ * @returns {Object} Preview de la formación de equipos
+ */
+activitiesRouter.get("/:id/algorithm/preview", verifyTeacher, async (req: Request, res: Response) => {
+    const activityId = req?.params?.id;
+
+    console.log(`👁️ [AlgorithmPreview] Generando preview para actividad: ${activityId}`);
+
+    try {
+        // Validar que la actividad existe y pertenece al profesor
+        const activity = await collections.activities?.findOne({ 
+            _id: new ObjectId(activityId),
+            teacher: new ObjectId(req.session?.authuser as string)
+        });
+
+        if (!activity) {
+            return res.status(404).send({
+                message: `Activity ${activityId} not found or you don't have permission`
+            });
+        }
+
+        // Verificar que el algoritmo está configurado
+        if (!activity.algorithmConfig?.isConfigured) {
+            return res.status(400).send({
+                message: "Algorithm is not configured for this activity. Please configure it first."
+            });
+        }
+
+        // Usar la validación completa para verificar el estado
+        const validation = await performCompleteValidation(activityId);
+        
+        if (!validation.canExecuteAlgorithm) {
+            return res.status(400).send({
+                message: "Algorithm cannot be executed. Please check validation results.",
+                validation: validation,
+                cannotExecuteReasons: validation.recommendations
+            });
+        }
+
+        console.log(`✅ [AlgorithmPreview] Validación pasada, generando preview simulado...`);
+
+        // Obtener estudiantes con sus traits BELBIN
+        const studentsWithBelbin = await collections.users?.find({
+            _id: { $in: activity.students || [] },
+            "askedQuestionnaires": {
+                $elemMatch: {
+                    "result": { $in: ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI"] }
+                }
+            }
+        }).toArray();
+
+        if (!studentsWithBelbin || studentsWithBelbin.length === 0) {
+            return res.status(400).send({
+                message: "No students with completed BELBIN test found"
+            });
+        }
+
+        const teamSize = activity.algorithmConfig.teamSize;
+        const totalStudents = studentsWithBelbin.length;
+        const estimatedTeams = Math.ceil(totalStudents / teamSize);
+
+        console.log(`📊 [AlgorithmPreview] Generando preview: ${totalStudents} estudiantes → ${estimatedTeams} equipos de ${teamSize}`);
+
+        // Generar preview simulado (distribución balanceada simple)
+        const previewTeams = generateSimulatedTeams(studentsWithBelbin, teamSize);
+
+        // Analizar la distribución de traits en cada equipo
+        const teamsAnalysis = previewTeams.map((team, index) => {
+            const teamTraits = team.map(student => {
+                const belbinResult = student.askedQuestionnaires?.find((aq: any) => 
+                    ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI"].includes(aq.result)
+                );
+                return belbinResult?.result || "Unknown";
+            });
+
+            const traitCounts = teamTraits.reduce((acc: any, trait) => {
+                acc[trait] = (acc[trait] || 0) + 1;
+                return acc;
+            }, {});
+
+            return {
+                teamNumber: index + 1,
+                teamName: `Equipo ${index + 1}`,
+                members: team.map(student => ({
+                    userId: student._id,
+                    userName: student.name,
+                    userEmail: student.email,
+                    belbinTrait: teamTraits[team.indexOf(student)]
+                })),
+                teamSize: team.length,
+                traitDistribution: traitCounts,
+                balanceScore: calculateTeamBalance(teamTraits)
+            };
+        });
+
+        // Calcular métricas generales del preview
+        const overallMetrics = {
+            totalStudents: totalStudents,
+            totalTeams: previewTeams.length,
+            averageTeamSize: Math.round((totalStudents / previewTeams.length) * 10) / 10,
+            traitDistributionGlobal: calculateGlobalTraitDistribution(studentsWithBelbin),
+            balanceScoreAverage: Math.round((teamsAnalysis.reduce((sum, team) => sum + team.balanceScore, 0) / teamsAnalysis.length) * 100) / 100
+        };
+
+        console.log(`🎯 [AlgorithmPreview] Preview generado - Balance promedio: ${overallMetrics.balanceScoreAverage}`);
+
+        return res.status(200).send({
+            message: "Algorithm preview generated successfully",
+            data: {
+                activityId: activityId,
+                activityTitle: activity.title,
+                isPreview: true,
+                previewGeneratedAt: new Date().toISOString(),
+                algorithmConfig: activity.algorithmConfig,
+                teams: teamsAnalysis,
+                metrics: overallMetrics,
+                disclaimer: "Esto es una simulación. Los resultados reales del algoritmo pueden diferir.",
+                nextSteps: [
+                    "Revisar la distribución de equipos",
+                    "Verificar el balance de traits BELBIN",
+                    "Ejecutar el algoritmo real si está satisfecho",
+                    "Modificar configuración si es necesario"
+                ]
+            }
+        });
+
+    } catch (error: any) {
+        console.error(`💥 [AlgorithmPreview] Error generando preview:`, error);
+        return res.status(500).send({
+            message: "Internal server error generating algorithm preview",
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Función auxiliar para generar equipos simulados de manera balanceada
+ * @param students Array de estudiantes con traits BELBIN
+ * @param teamSize Tamaño deseado de cada equipo
+ * @returns Array de equipos simulados
+ */
+function generateSimulatedTeams(students: any[], teamSize: number): any[][] {
+    console.log(`🎲 [SimulatedTeams] Generando equipos simulados para ${students.length} estudiantes`);
+
+    // Agrupar estudiantes por trait BELBIN
+    const studentsByTrait: any = {};
+    students.forEach(student => {
+        const belbinResult = student.askedQuestionnaires?.find((aq: any) => 
+            ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI"].includes(aq.result)
+        );
+        const trait = belbinResult?.result || "Unknown";
+        
+        if (!studentsByTrait[trait]) {
+            studentsByTrait[trait] = [];
+        }
+        studentsByTrait[trait].push(student);
+    });
+
+    console.log(`📊 [SimulatedTeams] Distribución por traits:`, Object.keys(studentsByTrait).map(trait => 
+        `${trait}: ${studentsByTrait[trait].length}`).join(', '));
+
+    const teams: any[][] = [];
+    const totalTeams = Math.ceil(students.length / teamSize);
+    
+    // Inicializar equipos vacíos
+    for (let i = 0; i < totalTeams; i++) {
+        teams.push([]);
+    }
+
+    // Distribuir estudiantes tratando de balancear traits
+    const traits = Object.keys(studentsByTrait);
+    let currentTeamIndex = 0;
+
+    // Primera pasada: distribuir un estudiante de cada trait en cada equipo
+    traits.forEach(trait => {
+        const studentsOfTrait = studentsByTrait[trait];
+        
+        studentsOfTrait.forEach((student: any) => {
+            if (teams[currentTeamIndex].length < teamSize) {
+                teams[currentTeamIndex].push(student);
+                currentTeamIndex = (currentTeamIndex + 1) % totalTeams;
+            }
+        });
+    });
+
+    // Segunda pasada: distribuir estudiantes restantes
+    const remainingStudents = students.filter(student => 
+        !teams.some(team => team.includes(student))
+    );
+
+    remainingStudents.forEach(student => {
+        // Encontrar el equipo con menos miembros
+        const teamWithLeastMembers = teams.reduce((minTeam, currentTeam, index) => {
+            return currentTeam.length < teams[minTeam].length ? index : minTeam;
+        }, 0);
+
+        if (teams[teamWithLeastMembers].length < teamSize) {
+            teams[teamWithLeastMembers].push(student);
+        }
+    });
+
+    console.log(`✅ [SimulatedTeams] ${teams.length} equipos generados con tamaños: ${teams.map(team => team.length).join(', ')}`);
+    
+    return teams;
+}
+
+/**
+ * Calcula un score de balance para un equipo basado en la diversidad de traits
+ * @param traits Array de traits BELBIN del equipo
+ * @returns Score de balance (0-1, donde 1 es mejor balance)
+ */
+function calculateTeamBalance(traits: string[]): number {
+    const uniqueTraits = new Set(traits).size;
+    const totalTraits = traits.length;
+    
+    // Balance perfecto sería tener todos traits diferentes
+    // Penalizar equipos con muchos traits repetidos
+    const diversityScore = uniqueTraits / totalTraits;
+    
+    // Bonus por tener traits complementarios (esto se puede expandir)
+    let complementaryBonus = 0;
+    const traitCounts = traits.reduce((acc: any, trait) => {
+        acc[trait] = (acc[trait] || 0) + 1;
+        return acc;
+    }, {});
+
+    // Penalizar si hay más de 2 del mismo trait
+    Object.values(traitCounts).forEach((count: any) => {
+        if (count > 2) {
+            complementaryBonus -= 0.1;
+        }
+    });
+
+    return Math.max(0, Math.min(1, diversityScore + complementaryBonus));
+}
+
+/**
+ * Calcula la distribución global de traits en toda la actividad
+ * @param students Array de estudiantes
+ * @returns Distribución de traits
+ */
+function calculateGlobalTraitDistribution(students: any[]): any {
+    const distribution: any = {};
+    
+    students.forEach(student => {
+        const belbinResult = student.askedQuestionnaires?.find((aq: any) => 
+            ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI"].includes(aq.result)
+        );
+        const trait = belbinResult?.result || "Unknown";
+        distribution[trait] = (distribution[trait] || 0) + 1;
+    });
+
+    return distribution;
+}
+
+/**
+ * 🐛 ENDPOINT DE DEBUGGING TEMPORAL SIN AUTENTICACIÓN
+ * @route GET /activities/:id/debug-no-auth
+ * @param {string} id - ID de la actividad
+ * @returns {Object} Información detallada de debugging
+ */
+activitiesRouter.get("/:id/debug-no-auth", async (req: Request, res: Response) => {
+    const activityId = req?.params?.id;
+
+    console.log(`🔍 [Debug-NoAuth] Iniciando debugging sin autenticación para actividad: ${activityId}`);
+
+    try {
+        // 1. Buscar actividad (sin verificar teacher)
+        const activity = await collections.activities?.findOne({ 
+            _id: new ObjectId(activityId)
+        });
+
+        if (!activity) {
+            return res.status(404).send({
+                message: `Activity ${activityId} not found`
+            });
+        }
+
+        // 2. Verificar estudiantes y BELBIN
+        const students = await collections.users?.find({
+            _id: { $in: activity.students || [] }
+        }).toArray();
+
+        const belbinQuestionnaireId = "6718b2263e29ad19c0e0c61f";
+        const studentsWithBelbin = students?.filter(student => {
+            return student.askedQuestionnaires?.some(q => 
+                q.questionnaire.toString() === belbinQuestionnaireId && q.result
+            );
+        }) || [];
+
+        const studentsWithoutBelbin = students?.filter(student => {
+            return !student.askedQuestionnaires?.some(q => 
+                q.questionnaire.toString() === belbinQuestionnaireId && q.result
+            );
+        }) || [];
+
+        // 3. Verificar configuración del algoritmo
+        const algorithmConfig = activity.algorithmConfig || {};
+        const hasValidConfig = !!(algorithmConfig as any).teamSize &&
+                              !!(algorithmConfig as any).minTeams &&
+                              !!(algorithmConfig as any).maxTeams;
+
+        // 4. Verificar archivos
+        const { generateAlgorithmFileName, algorithmFileExists } = await import("../functions/algorithm-functions");
+        
+        const algorithmFile = {
+            exists: algorithmFileExists(activityId),
+            path: generateAlgorithmFileName(activityId)
+        };
+
+        const fs = require('fs');
+        const path = require('path');
+        
+        const pythonFile = {
+            exists: fs.existsSync(path.join(__dirname, '..', 'scripts', 'pyteamformation', 'equipos_lola.py')),
+            path: path.join(__dirname, '..', 'scripts', 'pyteamformation', 'equipos_lola.py')
+        };
+
+        const instancesDirectory = {
+            exists: fs.existsSync(path.join(__dirname, '..', 'scripts', 'pyteamformation', 'instances')),
+            path: path.join(__dirname, '..', 'scripts', 'pyteamformation', 'instances')
+        };
+
+        console.log(`✅ [Debug-NoAuth] Debugging completado para actividad: ${activityId}`);
+
+        return res.status(200).send({
+            debug: {
+                activity: {
+                    id: activityId,
+                    title: activity.title,
+                    status: activity.algorithmStatus || 'not-configured',
+                    updatedAt: activity.updatedAt
+                },
+                students: {
+                    total: students?.length || 0,
+                    withBelbin: studentsWithBelbin.length,
+                    withoutBelbin: studentsWithoutBelbin.map(s => ({
+                        id: s._id,
+                        name: s.name,
+                        email: s.email
+                    })),
+                    completionPercentage: Math.round((studentsWithBelbin.length / (students?.length || 1)) * 100)
+                },
+                algorithmConfig: {
+                    hasValidConfig: hasValidConfig,
+                    config: algorithmConfig,
+                    configuredAt: (algorithmConfig as any).lastConfiguredAt || null
+                },
+                algorithmFile: algorithmFile,
+                pythonFile: pythonFile,
+                instancesDirectory: instancesDirectory,
+                systemInfo: {
+                    debugVersion: "no-auth-temp",
+                    timestamp: new Date().toISOString(),
+                    readyToExecute: hasValidConfig && studentsWithBelbin.length === students?.length && algorithmFile.exists
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error(`💥 [Debug-NoAuth] Error en debugging:`, error);
+        return res.status(500).send({
+            message: "Debug error",
+            error: error.message,
+            activityId: activityId
+        });
+    }
+});
+
+/**
+ * 🐛 ENDPOINT DE DEBUGGING PARA TROUBLESHOOTING
+ * Endpoint de debugging para obtener información completa del estado de una actividad
+ * Útil para troubleshooting cuando algo no funciona
+ * @route GET /activities/:id/debug
+ * @param {string} id - ID de la actividad
+ * @returns {Object} Información detallada de debugging
+ */
+activitiesRouter.get("/:id/debug", verifyTeacher, async (req: Request, res: Response) => {
+    const activityId = req?.params?.id;
+
+    console.log(`🐛 [Debug] Iniciando debugging para actividad: ${activityId}`);
+
+    try {
+        // 1. Obtener la actividad
+        const activity = await collections.activities?.findOne({
+            _id: new ObjectId(activityId),
+            teacher: new ObjectId((req.session as any)?.authuser)
+        });
+
+        if (!activity) {
+            return res.status(404).send({
+                error: "Activity not found",
+                message: `Activity with id ${activityId} not found or doesn't belong to current teacher`
+            });
+        }
+
+        // 2. Obtener información detallada de estudiantes
+        const studentIds = activity.students || [];
+        const students = await collections.users?.find({
+            _id: { $in: studentIds }
+        }).toArray();
+
+        // 3. Analizar datos BELBIN
+        const belbinQuestionnaireId = "6718b2263e29ad19c0e0c61f";
+        const studentsWithBelbin = students?.filter(student => {
+            return student.askedQuestionnaires?.some(q => 
+                q.questionnaire.toString() === belbinQuestionnaireId && q.result
+            );
+        }) || [];
+
+        const studentsWithoutBelbin = students?.filter(student => {
+            return !student.askedQuestionnaires?.some(q => 
+                q.questionnaire.toString() === belbinQuestionnaireId && q.result
+            );
+        }) || [];
+
+        // 4. Extraer traits BELBIN de cada estudiante
+        const belbinDetails = studentsWithBelbin.map(student => {
+            const belbinResponse = student.askedQuestionnaires?.find(q => 
+                q.questionnaire.toString() === belbinQuestionnaireId
+            );
+
+            return {
+                studentId: student._id,
+                email: student.email,
+                name: student.name,
+                belbinRole: belbinResponse?.result,
+                completedAt: belbinResponse?.completedAt
+            };
+        });
+
+        // 5. Verificar configuración del algoritmo
+        const algorithmConfig = activity.algorithmConfig || {};
+        const hasValidConfig = !!(algorithmConfig as any).teamSize &&
+                              !!(algorithmConfig as any).minTeams &&
+                              !!(algorithmConfig as any).maxTeams;
+
+        // 6. Verificar archivos JSON del algoritmo
+        const { generateAlgorithmFileName, getAlgorithmFilePath, algorithmFileExists, performCompleteValidation, getActivityMembersWithTraits } = await import("../functions/algorithm-functions");
+
+        const algorithmFileName = generateAlgorithmFileName(activityId);
+        const algorithmFilePath = getAlgorithmFilePath(activityId);
+        const fileExists = await algorithmFileExists(activityId);
+
+        // 7. Realizar validación completa
+        let validationResult: any;
+        try {
+            validationResult = await performCompleteValidation(activityId);
+        } catch (validationError: any) {
+            validationResult = {
+                isValid: false,
+                errors: [`Validation error: ${validationError.message}`],
+                warnings: [],
+                recommendations: ["Fix validation errors first"]
+            };
+        }
+
+        // 8. Obtener miembros con traits para el algoritmo
+        let algorithmMembers: any;
+        try {
+            algorithmMembers = await getActivityMembersWithTraits(activityId);
+        } catch (membersError: any) {
+            algorithmMembers = {
+                error: `Error getting members: ${membersError.message}`
+            };
+        }
+
+        // 9. Compilar información de debugging
+        const debugInfo = {
+            timestamp: new Date().toISOString(),
+            activity: {
+                id: activityId,
+                title: activity.title,
+                description: activity.description,
+                algorithmStatus: activity.algorithmStatus || 'not-configured',
+                createdAt: activity.createdAt,
+                updatedAt: activity.updatedAt
+            },
+            students: {
+                total: studentIds.length,
+                withBelbin: studentsWithBelbin.length,
+                withoutBelbin: studentsWithoutBelbin.length,
+                completionPercentage: studentIds.length > 0 ? 
+                    Math.round((studentsWithBelbin.length / studentIds.length) * 100) : 0,
+                belbinDetails: belbinDetails,
+                studentsWithoutBelbin: studentsWithoutBelbin.map(s => ({
+                    id: s._id,
+                    email: s.email,
+                    name: s.name
+                }))
+            },
+            algorithmConfig: {
+                hasValidConfig: hasValidConfig,
+                config: algorithmConfig,
+                configuredAt: (algorithmConfig as any).lastConfiguredAt || null
+            },
+            algorithmFile: {
+                fileName: algorithmFileName,
+                filePath: algorithmFilePath,
+                exists: fileExists,
+                canGenerate: studentsWithBelbin.length > 0 && hasValidConfig
+            },
+            validation: validationResult,
+            algorithmMembers: algorithmMembers,
+            systemChecks: {
+                mongoConnection: !!collections.activities,
+                algorithmFunctions: true,
+                pythonScriptPath: "src/scripts/algorithm.py"
+            }
+        };
+
+        console.log(`✅ [Debug] Debugging completado para actividad: ${activityId}`);
+        console.log(`📊 [Debug] Resumen: ${studentsWithBelbin.length}/${studentIds.length} con BELBIN, Config válido: ${hasValidConfig}, Archivo existe: ${fileExists}`);
+
+        return res.status(200).send({
+            success: true,
+            debug: debugInfo
+        });
+
+    } catch (error: any) {
+        console.error(`💥 [Debug] Error en debugging:`, error);
+        return res.status(500).send({
+            success: false,
+            error: "Debug endpoint failed",
+            message: error.message,
+            stack: error.stack
+        });
+    }
+});
+
+/**
+ * 🧪 ENDPOINT DE TESTING DIRECTO - SIMULA FRONTEND
+ * Endpoint de testing que simula exactamente lo que haría el frontend
+ * Útil para debugging sin depender del frontend
+ * @route POST /activities/:id/test-create-groups
+ * @param {string} id - ID de la actividad
+ * @returns {Object} Resultado del testing
+ */
+activitiesRouter.post("/:id/test-create-groups", verifyTeacher, async (req: Request, res: Response) => {
+    const activityId = req?.params?.id;
+
+    console.log(`🧪 [TestCreateGroups] ==========================================`);
+    console.log(`🧪 [TestCreateGroups] TESTING DIRECTO - CREAR GRUPOS`);
+    console.log(`🧪 [TestCreateGroups] Actividad: ${activityId}`);
+    console.log(`🧪 [TestCreateGroups] Simulando comportamiento del frontend`);
+    console.log(`🧪 [TestCreateGroups] ==========================================`);
+
+    interface TestStep {
+        step: number;
+        name: string;
+        success: boolean;
+        data?: any;
+        error?: string;
+    }
+
+    try {
+        const testResults = {
+            timestamp: new Date().toISOString(),
+            activityId: activityId,
+            steps: [] as TestStep[]
+        };
+
+        // Paso 1: Verificar que la actividad existe
+        console.log(`🧪 [TestCreateGroups] Paso 1: Verificando actividad...`);
+        const activity = await collections.activities?.findOne({
+            _id: new ObjectId(activityId),
+            teacher: new ObjectId((req.session as any)?.authuser)
+        });
+
+        if (!activity) {
+            testResults.steps.push({
+                step: 1,
+                name: "Verificar actividad",
+                success: false,
+                error: "Actividad no encontrada o sin permisos"
+            });
+            return res.status(404).send(testResults);
+        }
+
+        testResults.steps.push({
+            step: 1,
+            name: "Verificar actividad",
+            success: true,
+            data: { title: activity.title, studentsCount: activity.students?.length || 0 }
+        });
+
+        // Paso 2: Verificar estado de configuración
+        console.log(`🧪 [TestCreateGroups] Paso 2: Verificando configuración...`);
+        const hasConfig = activity.algorithmConfig?.isConfigured;
+        testResults.steps.push({
+            step: 2,
+            name: "Verificar configuración",
+            success: !!hasConfig,
+            data: {
+                hasConfig: !!activity.algorithmConfig,
+                isConfigured: hasConfig,
+                config: activity.algorithmConfig
+            }
+        });
+
+        if (!hasConfig) {
+            console.log(`🧪 [TestCreateGroups] ❌ Configuración faltante`);
+            return res.status(400).send(testResults);
+        }
+
+        // Paso 3: Verificar datos BELBIN
+        console.log(`🧪 [TestCreateGroups] Paso 3: Verificando datos BELBIN...`);
+        const students = await collections.users?.find({
+            _id: { $in: activity.students || [] }
+        }).toArray();
+
+        const belbinQuestionnaireId = "6718b2263e29ad19c0e0c61f";
+        const studentsWithBelbin = students?.filter(student => {
+            return student.askedQuestionnaires?.some(q => 
+                q.questionnaire.toString() === belbinQuestionnaireId && q.result
+            );
+        }) || [];
+
+        const studentsWithoutBelbin = students?.filter(student => {
+            return !student.askedQuestionnaires?.some(q => 
+                q.questionnaire.toString() === belbinQuestionnaireId && q.result
+            );
+        }) || [];
+
+        const belbinDetails = studentsWithBelbin.map(student => {
+            const belbinResponse = student.askedQuestionnaires?.find(q => 
+                q.questionnaire.toString() === belbinQuestionnaireId
+            );
+
+            return {
+                email: student.email,
+                name: student.name,
+                belbinRole: belbinResponse?.result,
+                completedAt: belbinResponse?.completedAt
+            };
+        });
+
+        const totalStudents = students?.length || 0;
+        testResults.steps.push({
+            step: 3,
+            name: "Verificar datos BELBIN",
+            success: studentsWithoutBelbin.length === 0,
+            data: {
+                totalStudents: totalStudents,
+                studentsWithBelbin: studentsWithBelbin.length,
+                studentsWithoutBelbin: studentsWithoutBelbin.length,
+                completionPercentage: totalStudents > 0 ? Math.round((studentsWithBelbin.length / totalStudents) * 100) : 0,
+                belbinDetails: belbinDetails,
+                missingStudents: studentsWithoutBelbin.map(s => ({ email: s.email, name: s.name }))
+            }
+        });
+
+        if (studentsWithoutBelbin.length > 0) {
+            console.log(`🧪 [TestCreateGroups] ❌ Estudiantes sin BELBIN: ${studentsWithoutBelbin.length}`);
+            return res.status(400).send(testResults);
+        }
+
+        // Paso 4: Verificar archivo JSON del algoritmo
+        console.log(`🧪 [TestCreateGroups] Paso 4: Verificando archivo JSON...`);
+        const { algorithmFileExists, createAlgorithmFileForActivity, generateAlgorithmFileName } = await import("../functions/algorithm-functions");
+        
+        let fileExists = await algorithmFileExists(activityId);
+        const fileName = generateAlgorithmFileName(activityId);
+
+        if (!fileExists) {
+            console.log(`🧪 [TestCreateGroups] Generando archivo JSON...`);
+            try {
+                const teamSize = activity.algorithmConfig?.teamSize || 4;
+                const jsonResult = await createAlgorithmFileForActivity(activityId, teamSize);
+                fileExists = true;
+                testResults.steps.push({
+                    step: 4,
+                    name: "Verificar/crear archivo JSON",
+                    success: true,
+                    data: {
+                        fileExists: true,
+                        fileName: fileName,
+                        generated: true
+                    }
+                });
+            } catch (jsonError: any) {
+                testResults.steps.push({
+                    step: 4,
+                    name: "Verificar/crear archivo JSON",
+                    success: false,
+                    error: jsonError.message
+                });
+                return res.status(500).send(testResults);
+            }
+        } else {
+            testResults.steps.push({
+                step: 4,
+                name: "Verificar/crear archivo JSON",
+                success: true,
+                data: { fileExists: true, fileName: fileName, generated: false }
+            });
+        }
+
+        // Paso 5: Simular exactamente lo que hace el frontend - ejecutar algoritmo
+        console.log(`🧪 [TestCreateGroups] Paso 5: EJECUTANDO ALGORITMO (simulando frontend)...`);
+        
+        // Verificar que no esté ya ejecutándose
+        if (activity.algorithmStatus === 'running') {
+            testResults.steps.push({
+                step: 5,
+                name: "Ejecutar algoritmo",
+                success: false,
+                error: "Algoritmo ya en ejecución"
+            });
+            return res.status(409).send(testResults);
+        }
+
+        // Preparar datos exactamente como lo hace el endpoint principal
+        const workerData = {
+            activityId: activityId,
+            teamSize: activity.algorithmConfig?.teamSize || 4,
+            customConstraints: activity.algorithmConfig?.additionalConstraints || []
+        };
+
+        // Actualizar estado a 'running'
+        await collections.activities?.updateOne(
+            { _id: new ObjectId(activityId) },
+            {
+                $set: {
+                    algorithmStatus: 'running',
+                    updatedAt: new Date()
+                }
+            }
+        );
+
+        // Enviar notificación (si no falla)
+        try {
+            await addUserNotification(new ObjectId(activity.teacher), {
+                title: '🧪 Algoritmo de formación iniciado (TEST)',
+                description: `Test directo del algoritmo para la actividad "${activity.title}". Tiempo estimado: ${estimateExecutionTime(activity.students?.length || 0)} minutos.`,
+                link: `/activities/${activityId}`
+            });
+        } catch (notifError: any) {
+            console.log(`🧪 [TestCreateGroups] ⚠️ Error en notificación:`, notifError.message);
+        }
+
+        // Ejecutar worker
+        console.log(`🧪 [TestCreateGroups] Iniciando worker con datos:`, workerData);
+        
+        if (activeWorkers < MAX_WORKERS) {
+            startAlgorithmWorker(workerData);
+            testResults.steps.push({
+                step: 5,
+                name: "Ejecutar algoritmo",
+                success: true,
+                data: {
+                    workerData: workerData,
+                    activeWorkers: activeWorkers,
+                    maxWorkers: MAX_WORKERS,
+                    queuePosition: 0,
+                    estimatedTime: estimateExecutionTime(activity.students?.length || 0)
+                }
+            });
+        } else {
+            taskQueue.push(workerData);
+            testResults.steps.push({
+                step: 5,
+                name: "Ejecutar algoritmo",
+                success: true,
+                data: {
+                    workerData: workerData,
+                    activeWorkers: activeWorkers,
+                    maxWorkers: MAX_WORKERS,
+                    queuePosition: taskQueue.length,
+                    estimatedTime: estimateExecutionTime(activity.students?.length || 0),
+                    queued: true
+                }
+            });
+        }
+
+        console.log(`🧪 [TestCreateGroups] ==========================================`);
+        console.log(`🧪 [TestCreateGroups] TEST COMPLETADO EXITOSAMENTE`);
+        console.log(`🧪 [TestCreateGroups] Algoritmo iniciado para: "${activity.title}"`);
+        console.log(`🧪 [TestCreateGroups] Worker estado: ${activeWorkers}/${MAX_WORKERS}`);
+        console.log(`🧪 [TestCreateGroups] ==========================================`);
+
+        return res.status(200).send({
+            success: true,
+            message: "Test directo completado - Algoritmo iniciado exitosamente",
+            testResults: testResults,
+            finalState: {
+                activityId: activityId,
+                activityTitle: activity.title,
+                algorithmStatus: 'running',
+                studentsCount: activity.students?.length || 0,
+                teamSize: activity.algorithmConfig?.teamSize || 4,
+                startedAt: new Date().toISOString()
+            }
+        });
+
+    } catch (error: any) {
+        console.log(`🧪 [TestCreateGroups] ==========================================`);
+        console.log(`🧪 [TestCreateGroups] ERROR EN TEST DIRECTO`);
+        console.log(`🧪 [TestCreateGroups] Error: ${error.message}`);
+        console.log(`🧪 [TestCreateGroups] Stack: ${error.stack}`);
+        console.log(`🧪 [TestCreateGroups] ==========================================`);
+
+        return res.status(500).send({
+            success: false,
+            error: "Error en test directo",
+            message: error.message,
+            details: {
+                activityId: activityId,
+                timestamp: new Date().toISOString()
+            }
+        });
+    }
+});
+
+export default activitiesRouter;

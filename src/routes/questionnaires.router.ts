@@ -3,6 +3,12 @@ import { ObjectId } from "mongodb";
 import { collections } from "../services/database.service";
 import Questionnaire from "../models/questionnaire";
 import User from "../models/user";
+import { 
+    createAlgorithmFileForActivity,
+    validateAllStudentsCompletedBelbin,
+    algorithmFileExists,
+    handleActivityChange
+} from "../functions/algorithm-functions";
 
 export const questionnairesRouter = express.Router();
 
@@ -194,6 +200,9 @@ questionnairesRouter.put("/:id/submit", async (req: Request, res: Response) => {
                 const user = await collections.users?.findOne({ _id: authUserObjectId });
                 console.log(`📧 [Questionnaires] Email del usuario: ${user?.email} - Resultado: ${belbinResult}`);
                 
+                // 🔥 NUEVA FUNCIONALIDAD: Actualizar archivos JSON automáticamente
+                updateAlgorithmFilesForStudent(authUserId, user?.email || 'unknown');
+                
                 res.status(200).send({
                     message: "success", 
                     data: {
@@ -338,4 +347,56 @@ function getBelbinMainRoles(testValues: any) {
     });
 
     return roles;
+}
+
+/**
+ * Función mejorada para manejar cambios cuando un estudiante completa BELBIN
+ * Utiliza el nuevo sistema de escucha de cambios integrado
+ * @param userId ID del usuario que completó BELBIN
+ * @param userEmail Email del usuario para logs
+ */
+async function updateAlgorithmFilesForStudent(userId: string, userEmail: string): Promise<void> {
+    console.log(`🚀 [QuestionnaireBelbin] Procesando completitud BELBIN para usuario: ${userEmail}`);
+    
+    try {
+        // Obtener todas las actividades donde está este estudiante
+        const userActivities = await collections.activities?.find({
+            students: new ObjectId(userId)
+        }).toArray();
+
+        if (!userActivities || userActivities.length === 0) {
+            console.log(`⚠️ [QuestionnaireBelbin] Usuario ${userEmail} no está en ninguna actividad`);
+            return;
+        }
+
+        console.log(`📋 [QuestionnaireBelbin] Usuario ${userEmail} está en ${userActivities.length} actividad(es)`);
+
+        // Usar el nuevo sistema de escucha de cambios para cada actividad
+        const changePromises = userActivities.map(async (activity) => {
+            try {
+                const activityId = activity._id.toString();
+                console.log(`🔔 [QuestionnaireBelbin] Notificando cambio BELBIN para actividad: ${activity.title} (${activityId})`);
+
+                // Usar el sistema de escucha de cambios integrado
+                await handleActivityChange(activityId, 'student-belbin', {
+                    userId: userId,
+                    userEmail: userEmail,
+                    completedAt: new Date().toISOString()
+                });
+
+                console.log(`✅ [QuestionnaireBelbin] Cambio procesado para actividad: ${activity.title}`);
+
+            } catch (activityError: any) {
+                console.error(`💥 [QuestionnaireBelbin] Error procesando cambio para actividad ${activity.title}:`, activityError);
+            }
+        });
+
+        // Esperar a que se procesen todos los cambios
+        await Promise.all(changePromises);
+        
+        console.log(`🎉 [QuestionnaireBelbin] Todos los cambios BELBIN procesados exitosamente para usuario: ${userEmail}`);
+
+    } catch (error: any) {
+        console.error(`💥 [QuestionnaireBelbin] Error crítico procesando cambios BELBIN para ${userEmail}:`, error);
+    }
 }

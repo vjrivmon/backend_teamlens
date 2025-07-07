@@ -3,134 +3,157 @@
  * Utiliza archivos JSON específicos de actividad generados automáticamente
  */
 
-const { parentPort, workerData } = require('worker_threads');
-const { exec } = require('child_process');
-const path = require('path');
+const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
+const { spawn } = require('child_process');
 const fs = require('fs');
+const path = require('path');
+const { MongoClient, ObjectId } = require('mongodb');
 
-console.log(`🚀 [AlgorithmWorker] Worker iniciado para actividad: ${workerData.activityId}`);
+console.log('🚀 [AlgorithmWorker] Worker iniciado con datos:', workerData);
 
-/**
- * Ejecuta el algoritmo de formación de equipos usando el archivo JSON dinámico
- */
 async function runAlgorithm() {
+    const { activityId, teamSize, customConstraints } = workerData;
+    
     try {
-        const { activityId, teamSize, customConstraints = [] } = workerData;
+        console.log(`🎯 [AlgorithmWorker] Ejecutando algoritmo para actividad: ${activityId}`);
+        console.log(`📊 [AlgorithmWorker] Parámetros: teamSize=${teamSize}, constraints=${customConstraints?.length || 0}`);
         
-        if (!activityId) {
-            throw new Error('ActivityId es requerido');
-        }
-
-        console.log(`📋 [AlgorithmWorker] Parámetros recibidos:`, {
-            activityId,
-            teamSize,
-            constraintsCount: customConstraints.length
-        });
-
-        // Generar el nombre del archivo JSON dinámico
+        // 1. Verificar que existe el archivo JSON
         const jsonFileName = `activity_${activityId}_belbin.json`;
-        const pyteamformationPath = path.join(__dirname, '../../../pyteamformation');
-        const jsonFilePath = path.join(pyteamformationPath, 'instances', jsonFileName);
-
-        console.log(`📁 [AlgorithmWorker] Buscando archivo JSON: ${jsonFilePath}`);
-
-        // Verificar que el archivo JSON existe
+        const jsonFilePath = path.join(__dirname, '../../../pyteamformation/instances', jsonFileName);
+        
         if (!fs.existsSync(jsonFilePath)) {
-            throw new Error(`Archivo JSON no encontrado: ${jsonFileName}. El archivo debe generarse antes de ejecutar el algoritmo.`);
+            throw new Error(`Archivo JSON no encontrado: ${jsonFileName}`);
         }
-
-        console.log(`✅ [AlgorithmWorker] Archivo JSON encontrado: ${jsonFileName}`);
-
-        // Configurar el comando para ejecutar el script Python dinámico
-        const pythonScriptPath = path.join(pyteamformationPath, 'equipos_lola.py');
-        const command = `python "${pythonScriptPath}" "${jsonFileName}"`;
-
-        console.log(`🐍 [AlgorithmWorker] Ejecutando comando: ${command}`);
-        console.log(`📂 [AlgorithmWorker] Directorio de trabajo: ${pyteamformationPath}`);
-
-        // Configurar opciones del proceso
-        const execOptions = {
-            cwd: pyteamformationPath,
-            timeout: 300000, // 5 minutos timeout
-            maxBuffer: 1024 * 1024 * 10 // 10MB buffer
-        };
-
-        // Ejecutar el algoritmo
-        exec(command, execOptions, (error, stdout, stderr) => {
-            if (error) {
-                console.error(`💥 [AlgorithmWorker] Error ejecutando algoritmo: ${error.message}`);
-                console.error(`📋 [AlgorithmWorker] Código de error: ${error.code}`);
-                console.error(`🔍 [AlgorithmWorker] Señal: ${error.signal}`);
-                
-                parentPort.postMessage({
-                    success: false,
-                    error: error.message,
-                    errorCode: error.code,
-                    stderr: stderr
-                });
-                return;
-            }
-
-            // Log de información del proceso (stderr contiene logs del script Python)
-            if (stderr) {
-                console.log(`📊 [AlgorithmWorker] Logs del algoritmo:`);
-                console.log(stderr);
-            }
-
-            // Verificar que tenemos output
-            if (!stdout || stdout.trim() === '') {
-                console.error(`⚠️ [AlgorithmWorker] El algoritmo no devolvió resultados`);
-                parentPort.postMessage({
-                    success: false,
-                    error: 'El algoritmo no devolvió resultados válidos',
-                    stderr: stderr
-                });
-                return;
-            }
-
-            try {
-                // El output del algoritmo debería ser la solución en formato JSON
-                console.log(`📈 [AlgorithmWorker] Resultado crudo del algoritmo:`);
-                console.log(stdout);
-                
-                // El algoritmo retorna la solución directamente
-                // La solución ya está en el formato correcto para crear grupos
-                const algorithmResult = stdout.trim();
-                
-                console.log(`✅ [AlgorithmWorker] Algoritmo ejecutado exitosamente`);
-                console.log(`📊 [AlgorithmWorker] Resultado procesado:`, algorithmResult);
-
-                // Enviar resultado exitoso al proceso principal
-                parentPort.postMessage({
-                    success: true,
-                    result: algorithmResult,
-                    activityId: activityId,
-                    jsonFileName: jsonFileName,
-                    executionTime: new Date().toISOString()
-                });
-
-            } catch (parseError) {
-                console.error(`💥 [AlgorithmWorker] Error procesando resultado del algoritmo:`, parseError);
-                console.error(`📄 [AlgorithmWorker] Output crudo:`, stdout);
-                
-                parentPort.postMessage({
-                    success: false,
-                    error: `Error procesando resultado: ${parseError.message}`,
-                    rawOutput: stdout,
-                    stderr: stderr
-                });
-            }
+        
+        console.log(`📄 [AlgorithmWorker] Archivo JSON encontrado: ${jsonFileName}`);
+        
+        // 2. Leer el archivo JSON
+        const jsonContent = fs.readFileSync(jsonFilePath, 'utf8');
+        const algorithmData = JSON.parse(jsonContent);
+        
+        console.log(`📋 [AlgorithmWorker] Datos del algoritmo cargados:`);
+        console.log(`   - Total miembros: ${algorithmData.members?.length || 0}`);
+        console.log(`   - Tamaño equipo: ${algorithmData.constraints?.find(c => c.type === 'SizeCardinality')?.team_size || 'no especificado'}`);
+        console.log(`   - Constraints: ${algorithmData.constraints?.length || 0}`);
+        
+        // 3. CRUCIAL: Obtener lista de IDs de estudiantes en el mismo orden que en members
+        const client = new MongoClient('mongodb://localhost:27017');
+        await client.connect();
+        const db = client.db('test');
+        
+        // Obtener la actividad para conseguir los IDs de estudiantes
+        const activity = await db.collection('activities').findOne({ 
+            _id: new ObjectId(activityId) 
         });
-
+        
+        if (!activity || !activity.students) {
+            throw new Error('Actividad no encontrada o sin estudiantes');
+        }
+        
+        // Obtener estudiantes con BELBIN en el MISMO ORDEN que se generó el JSON
+        const students = await db.collection('users').find({
+            _id: { $in: activity.students },
+            "askedQuestionnaires": {
+                $elemMatch: {
+                    "result": { $in: ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI"] }
+                }
+            }
+        }).toArray();
+        
+        // Mapear estudiantes a sus IDs en el orden correcto
+        const studentIds = students.map(student => student._id.toString());
+        
+        console.log(`👥 [AlgorithmWorker] Estudiantes mapeados: ${studentIds.length}`);
+        console.log(`📧 [AlgorithmWorker] Emails: ${students.map(s => s.email).join(', ')}`);
+        
+        await client.close();
+        
+        // 4. Ejecutar el script Python
+        console.log(`🐍 [AlgorithmWorker] Ejecutando script Python...`);
+        
+        const pythonScript = path.join(__dirname, 'algorithm.py');
+        if (!fs.existsSync(pythonScript)) {
+            throw new Error(`Script Python no encontrado: ${pythonScript}`);
+        }
+        
+        const pythonProcess = spawn('python', [pythonScript, JSON.stringify(algorithmData)]);
+        
+        let stdout = '';
+        let stderr = '';
+        
+        pythonProcess.stdout.on('data', (data) => {
+            stdout += data.toString();
+        });
+        
+        pythonProcess.stderr.on('data', (data) => {
+            const message = data.toString();
+            stderr += message;
+            console.log(`🐍 [Python] ${message.trim()}`);
+        });
+        
+        // 5. Esperar a que termine el proceso Python
+        const exitCode = await new Promise((resolve) => {
+            pythonProcess.on('close', resolve);
+        });
+        
+        if (exitCode !== 0) {
+            throw new Error(`Script Python falló con código ${exitCode}. Error: ${stderr}`);
+        }
+        
+        console.log(`✅ [AlgorithmWorker] Script Python completado exitosamente`);
+        
+        // 6. CORREGIDO: Procesar resultado - convertir índices a IDs reales
+        const teamIndices = JSON.parse(stdout.trim());
+        console.log(`📊 [AlgorithmWorker] Equipos recibidos del Python: ${teamIndices.length}`);
+        
+        // Convertir índices a IDs reales de estudiantes
+        const teamsWithRealIds = teamIndices.map((teamIndices, teamIndex) => {
+            const teamIds = teamIndices.map(index => {
+                if (index >= 0 && index < studentIds.length) {
+                    return studentIds[index];
+                } else {
+                    console.warn(`⚠️ [AlgorithmWorker] Índice inválido: ${index} (máximo: ${studentIds.length - 1})`);
+                    return null;
+                }
+            }).filter(id => id !== null);
+            
+            console.log(`👥 [AlgorithmWorker] Equipo ${teamIndex + 1}: ${teamIds.length} miembros`);
+            return teamIds;
+        });
+        
+        console.log(`🎉 [AlgorithmWorker] Resultado final: ${teamsWithRealIds.length} equipos con IDs reales`);
+        
+        // 7. Enviar resultado exitoso al hilo principal
+        if (parentPort) {
+            parentPort.postMessage({
+                success: true,
+                result: JSON.stringify(teamsWithRealIds),
+                teamsCount: teamsWithRealIds.length,
+                studentsProcessed: studentIds.length,
+                executionTime: Date.now()
+            });
+        }
+        
     } catch (error) {
-        console.error(`💥 [AlgorithmWorker] Error crítico en worker:`, error);
-        parentPort.postMessage({
-            success: false,
-            error: error.message,
-            criticalError: true
-        });
+        console.error(`💥 [AlgorithmWorker] Error ejecutando algoritmo:`, error);
+        
+        if (parentPort) {
+            parentPort.postMessage({
+                success: false,
+                error: error.message,
+                details: {
+                    activityId: activityId,
+                    errorType: error.constructor.name,
+                    stack: error.stack
+                }
+            });
+        }
     }
 }
 
-// Ejecutar el algoritmo
-runAlgorithm();
+// Ejecutar si estamos en el worker thread
+if (!isMainThread && parentPort) {
+    console.log(`🔄 [AlgorithmWorker] Iniciando ejecución del algoritmo...`);
+    runAlgorithm();
+}

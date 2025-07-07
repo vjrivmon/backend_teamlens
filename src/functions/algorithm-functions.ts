@@ -5,10 +5,10 @@ import * as path from 'path';
 
 /**
  * Interfaz para definir la estructura del archivo JSON del algoritmo
+ * CORREGIDA para coincidir con la plantilla esperada por Python
  */
 interface AlgorithmMember {
-    id: string;
-    traits: string[];
+    traits: string[];  // SIN id - solo traits
 }
 
 interface AlgorithmConstraint {
@@ -22,7 +22,7 @@ interface AlgorithmConstraint {
 }
 
 interface AlgorithmData {
-    number_members: number;
+    number_members: number;  // TOTAL de estudiantes, no tamaño del equipo
     members: AlgorithmMember[];
     agg_func: string;
     constraints: AlgorithmConstraint[];
@@ -106,6 +106,7 @@ export const validateAllStudentsCompletedBelbin = async (activityId: string): Pr
 
 /**
  * Obtiene los miembros de una actividad con sus traits BELBIN
+ * CORREGIDO: Retorna solo traits sin IDs como espera el algoritmo Python
  * @param activityId ID de la actividad
  * @returns Promise<AlgorithmMember[]> Array de miembros con traits
  */
@@ -143,14 +144,13 @@ export const getActivityMembersWithTraits = async (activityId: string): Promise<
 
             const primaryTrait = belbinQuestionnaire?.result || "";
             
-            // El algoritmo espera un array de traits, ponemos el trait principal
+            // CORREGIDO: Solo retornar traits, sin ID
             const traits = primaryTrait ? [primaryTrait] : [];
 
             console.log(`📝 [AlgorithmFunctions] Estudiante ${student.email}: ${traits.join(', ')}`);
 
             return {
-                id: student._id.toString(),
-                traits: traits
+                traits: traits  // SIN id - solo traits como en la plantilla
             };
         });
 
@@ -165,6 +165,7 @@ export const getActivityMembersWithTraits = async (activityId: string): Promise<
 
 /**
  * Genera las constraints básicas para el algoritmo
+ * CORREGIDO: Estructura según plantilla Python esperada
  * @param activityId ID de la actividad
  * @param numberOfMembers Número total de miembros
  * @param teamSize Tamaño de cada equipo
@@ -184,7 +185,7 @@ export const generateBasicConstraints = (
         {
             type: "AllAssigned",
             name: "",
-            number_members: numberOfMembers
+            number_members: numberOfMembers  // Total de estudiantes
         },
         {
             type: "NonOverlapping",
@@ -193,9 +194,9 @@ export const generateBasicConstraints = (
         {
             type: "SizeCardinality",
             name: "",
-            team_size: teamSize,
-            min: numberOfTeams,
-            max: numberOfTeams
+            team_size: teamSize,  // Tamaño de cada equipo
+            min: numberOfTeams,   // Número de equipos a crear
+            max: numberOfTeams    // Número de equipos a crear
         }
     ];
 
@@ -205,6 +206,7 @@ export const generateBasicConstraints = (
 
 /**
  * Genera el archivo JSON completo para el algoritmo
+ * CORREGIDO: Estructura según plantilla Python esperada
  * @param activityId ID de la actividad
  * @param teamSize Tamaño deseado de cada equipo
  * @param customConstraints Constraints adicionales del profesor (opcional)
@@ -226,14 +228,14 @@ export const generateAlgorithmJSON = async (
             return null;
         }
 
-        // Obtener miembros con traits
+        // Obtener miembros con traits (sin IDs)
         const members = await getActivityMembersWithTraits(activityId);
         if (members.length === 0) {
             console.error(`❌ [AlgorithmFunctions] No hay miembros válidos para el algoritmo`);
             return null;
         }
 
-        const numberOfMembers = members.length;
+        const numberOfMembers = members.length;  // Total de estudiantes
         const numberOfTeams = Math.ceil(numberOfMembers / teamSize);
 
         console.log(`🧮 [AlgorithmFunctions] Calculando distribución: ${numberOfMembers} miembros → ${numberOfTeams} equipos`);
@@ -244,10 +246,10 @@ export const generateAlgorithmJSON = async (
         // Combinar constraints básicas con customs
         const allConstraints = [...basicConstraints, ...customConstraints];
 
-        // Construir datos del algoritmo
+        // CORREGIDO: Construir datos del algoritmo según plantilla Python
         const algorithmData: AlgorithmData = {
-            number_members: teamSize,
-            members: members,
+            number_members: numberOfMembers,  // TOTAL de estudiantes, no tamaño del equipo
+            members: members,  // Solo traits, sin IDs
             agg_func: "sum",
             constraints: allConstraints,
             traits: BELBIN_TRAITS,
@@ -256,6 +258,7 @@ export const generateAlgorithmJSON = async (
 
         console.log(`✅ [AlgorithmFunctions] JSON del algoritmo generado exitosamente`);
         console.log(`📋 [AlgorithmFunctions] Resumen: ${members.length} miembros, ${allConstraints.length} constraints`);
+        console.log(`🎯 [AlgorithmFunctions] Estructura corregida: total_estudiantes=${numberOfMembers}, equipo_size=${teamSize}, num_equipos=${numberOfTeams}`);
 
         return algorithmData;
 

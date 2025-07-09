@@ -3,6 +3,7 @@ import { ObjectId } from "mongodb";
 import Activity from "../models/activity";
 import { collections } from "../services/database.service";
 import { verifyTeacher } from "../middlewares";
+import { webSocketService } from "../services/websocket.service";
 
 import { addUserNotification, createNonRegisteredAccount } from "../functions/user-functions";
 
@@ -122,11 +123,23 @@ handleActivityStudentsRouter.post("/", verifyTeacher, async (req: Request, res: 
         // Añadir notificaciones con manejo de errores mejorado
         const notificationPromises = existingUserIds.map(async (id) => {
             try {
-                await addUserNotification(id, {
+                const notificationData = {
                     title: "Actividad",
                     description: `Has sido añadido a una nueva actividad`,
                     link: `/activities/${activityId}`
+                };
+
+                await addUserNotification(id, notificationData);
+                
+                // 🌐 WebSocket: Enviar notificación en tiempo real al estudiante
+                webSocketService.emitToUser(id.toString(), 'new-activity-assignment', {
+                    activityId: activityId,
+                    title: notificationData.title,
+                    description: notificationData.description,
+                    link: notificationData.link,
+                    timestamp: new Date().toISOString()
                 });
+                
                 console.log(`✅ [ActivityStudents] Notificación enviada a usuario: ${id}`);
             } catch (error: any) {
                 console.error(`❌ [ActivityStudents] Error enviando notificación a usuario ${id}:`, error);
@@ -134,6 +147,115 @@ handleActivityStudentsRouter.post("/", verifyTeacher, async (req: Request, res: 
         });
 
         await Promise.all(notificationPromises);
+
+        // 🌐 WebSocket: Notificar al profesor sobre el éxito de la operación
+        const teacherNotification = {
+            title: `Estudiantes añadidos exitosamente`,
+            description: `Se han añadido ${existingUserIds.length} estudiantes a la actividad`,
+            activityId: activityId,
+            studentsAdded: existingUserIds.length,
+            emailSuccesses: emailSuccesses.length,
+            emailErrors: emailErrors.length,
+            timestamp: new Date().toISOString()
+        };
+
+        webSocketService.emitToUser(req.session?.authuser as string, 'activity-students-added', teacherNotification);
+
+        // 🔥 NUEVA FUNCIONALIDAD: Sistema de escucha de cambios para estudiantes añadidos
+        if (existingUserIds.length > 0) {
+            console.log(`🔔 [ActivityStudents] Activando sistema de escucha de cambios para ${existingUserIds.length} nuevos estudiantes...`);
+            
+            const { handleActivityChange } = await import("../functions/algorithm-functions");
+            
+            await handleActivityChange(activityId, 'student-added', {
+                addedStudents: existingUserIds.map(id => id.toString()),
+                addedBy: req.session?.authuser,
+                addedAt: new Date().toISOString()
+            });
+
+            // 🚀 CRÍTICO: Verificar automáticamente el estado de Belbin después de añadir estudiantes
+            try {
+                console.log(`🔄 [ActivityStudents] Verificando estado Belbin automáticamente...`);
+                
+                // Obtener la actividad actualizada
+                const updatedActivity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
+                if (!updatedActivity) {
+                    console.log(`❌ [ActivityStudents] No se pudo obtener la actividad actualizada`);
+                    return;
+                }
+
+                const totalStudents = updatedActivity.students?.length || 0;
+                let studentsWithBelbin = 0;
+
+                // Verificar completitud de Belbin estudiante por estudiante
+                for (const studentId of updatedActivity.students || []) {
+                    const student = await collections.users?.findOne({ _id: studentId });
+                    if (student) {
+                        const hasBelbin = student.askedQuestionnaires?.some(
+                            q => q.questionnaire.toString() === process.env.BELBIN_QUESTIONNAIRE_ID && q.result
+                        );
+                        if (hasBelbin) {
+                            studentsWithBelbin++;
+                        }
+                    }
+                }
+
+                const allCompleted = studentsWithBelbin === totalStudents;
+                const completionPercentage = totalStudents > 0 ? Math.round((studentsWithBelbin / totalStudents) * 100) : 0;
+
+                console.log(`📊 [ActivityStudents] Belbin: ${studentsWithBelbin}/${totalStudents} (${completionPercentage}%)`);
+
+                // Determinar nuevo estado del algoritmo
+                let newAlgorithmStatus = updatedActivity.algorithmStatus || 'not-configured';
+                const hasConfig = updatedActivity.algorithmConfig?.isConfigured;
+
+                if (hasConfig && allCompleted) {
+                    newAlgorithmStatus = 'ready';
+                } else if (hasConfig && !allCompleted) {
+                    newAlgorithmStatus = 'configured';
+                }
+
+                // Actualizar actividad si hay cambios
+                if (updatedActivity.algorithmStatus !== newAlgorithmStatus) {
+                    await collections.activities?.updateOne(
+                        { _id: new ObjectId(activityId) },
+                        { 
+                            $set: { 
+                                algorithmStatus: newAlgorithmStatus,
+                                updatedAt: new Date()
+                            }
+                        }
+                    );
+                    console.log(`🔄 [ActivityStudents] Estado actualizado: ${updatedActivity.algorithmStatus} → ${newAlgorithmStatus}`);
+                }
+
+                // 🌐 WebSocket: Emitir evento de actualización de estado de Belbin
+                webSocketService.emitToUser(req.session?.authuser as string, 'activity-belbin-status-updated', {
+                    activityId: activityId,
+                    title: updatedActivity.title,
+                    totalStudents,
+                    completedBelbin: studentsWithBelbin,
+                    completionPercentage,
+                    allCompleted,
+                    algorithmStatus: newAlgorithmStatus,
+                    timestamp: new Date().toISOString()
+                });
+
+                if (allCompleted) {
+                    webSocketService.emitToUser(req.session?.authuser as string, 'activity-belbin-completed', {
+                        activityId: activityId,
+                        message: 'Todos los estudiantes han completado el test Belbin',
+                        completionPercentage: 100,
+                        algorithmStatus: newAlgorithmStatus,
+                        timestamp: new Date().toISOString()
+                    });
+                }
+
+            } catch (refreshError: any) {
+                console.error(`❌ [ActivityStudents] Error verificando estado Belbin:`, refreshError.message);
+                // No fallar la operación principal por esto
+            }
+        }
 
         if (result && result.modifiedCount) {
             const responseMessage = {

@@ -4,6 +4,7 @@ import { collections } from "../services/database.service";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import emailService from "../services/email.service";
+import { webSocketService } from "../services/websocket.service";
 
 /**
  * Crea una cuenta temporal para un usuario no registrado y envía invitación por email
@@ -217,6 +218,36 @@ export const addUserNotification = async (
             // Log adicional para notificaciones de alta prioridad
             if (enterpriseNotification.priority === 'high') {
                 console.log(`🚨 [UserFunctions] NOTIFICACIÓN DE ALTA PRIORIDAD enviada a usuario ${userId}`);
+            }
+
+            // 🌐 WebSocket: Emitir evento de nueva notificación en tiempo real
+            try {
+                const notificationPayload = {
+                    notificationId: notificationId.toString(),
+                    title: enterpriseNotification.title,
+                    description: enterpriseNotification.description,
+                    type: enterpriseNotification.type,
+                    priority: enterpriseNotification.priority,
+                    icon: enterpriseNotification.icon,
+                    link: enterpriseNotification.link,
+                    actionRequired: enterpriseNotification.actionRequired,
+                    timestamp: (enterpriseNotification.timestamp || now).toISOString(),
+                    read: false
+                };
+
+                webSocketService.emitToUser(userId.toString(), 'new-notification', notificationPayload);
+                
+                console.log(`🌐 [UserFunctions] Evento WebSocket 'new-notification' enviado a usuario ${userId}`);
+                
+                // Para notificaciones de alta prioridad, emitir evento adicional
+                if (enterpriseNotification.priority === 'high') {
+                    webSocketService.emitToUser(userId.toString(), 'high-priority-notification', notificationPayload);
+                    console.log(`🚨 [UserFunctions] Evento WebSocket 'high-priority-notification' enviado a usuario ${userId}`);
+                }
+
+            } catch (wsError: any) {
+                console.error(`⚠️ [UserFunctions] Error enviando evento WebSocket (no crítico):`, wsError.message);
+                // No fallar la operación principal si WebSocket falla
             }
             
             return notificationId;

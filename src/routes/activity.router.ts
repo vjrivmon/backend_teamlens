@@ -2,6 +2,7 @@ import express, { Request, Response } from "express";
 
 import { ObjectId } from "mongodb";
 import { collections } from "../services/database.service";
+import { webSocketService } from "../services/websocket.service";
 import Activity, { AlgorithmConfig } from "../models/activity";
 
 import { groupsRouter } from "./groups.router";
@@ -316,6 +317,27 @@ activitiesRouter.put("/:id/algorithm/config", verifyTeacher, async (req: Request
             console.log(`✅ [AlgorithmConfig] Archivo JSON generado por sistema de escucha: ${filePath}`);
         } else {
             console.log(`⏳ [AlgorithmConfig] Archivo JSON no generado - Esperando completitud BELBIN`);
+        }
+
+        // 🌐 WebSocket: Notificar configuración actualizada en tiempo real
+        webSocketService.emitToUser(req.session?.authuser as string, 'activity-config-updated', {
+            activityId: activityId,
+            algorithmStatus: algorithmStatus,
+            allStudentsCompletedBelbin: allCompleted,
+            fileGenerated: fileGeneratedAfterChange,
+            canRunAlgorithm: algorithmStatus === 'ready' && fileGeneratedAfterChange,
+            timestamp: new Date().toISOString()
+        });
+
+        // 🌐 WebSocket: Notificar a estudiantes si el algoritmo está listo
+        if (algorithmStatus === 'ready' && activity.students?.length) {
+            const studentIds = activity.students.map(id => id.toString());
+            webSocketService.emitToUsers(studentIds, 'activity-algorithm-ready', {
+                activityId: activityId,
+                title: activity.title,
+                message: 'El algoritmo de formación de equipos está listo para ejecutarse',
+                timestamp: new Date().toISOString()
+            });
         }
 
         // Respuesta exitosa con información del nuevo sistema
@@ -2517,6 +2539,193 @@ activitiesRouter.post("/:id/debug-no-auth", async (req: Request, res: Response) 
             success: false,
             message: "Debug test failed",
             error: error.message
+        });
+    }
+});
+
+/**
+ * 🔥 ENDPOINT CRÍTICO: Verificar y actualizar estado de completitud Belbin
+ * Este endpoint verifica automáticamente si todos los estudiantes han completado Belbin
+ * y actualiza el estado de la actividad en tiempo real, emitiendo eventos WebSocket
+ * @route POST /activities/:id/refresh-belbin-status
+ */
+activitiesRouter.post("/:id/refresh-belbin-status", async (req: Request, res: Response) => {
+    const activityId = req?.params?.id;
+    const authUserId = req.session?.authuser as string;
+
+    console.log(`🔄 [RefreshBelbin] ==========================================`);
+    console.log(`🔄 [RefreshBelbin] VERIFICANDO ESTADO BELBIN PARA ACTIVIDAD: ${activityId}`);
+    console.log(`🔄 [RefreshBelbin] Usuario: ${authUserId}`);
+    console.log(`🔄 [RefreshBelbin] Timestamp: ${new Date().toISOString()}`);
+    console.log(`🔄 [RefreshBelbin] ==========================================`);
+
+    try {
+        // Obtener la actividad
+        const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
+
+        if (!activity) {
+            return res.status(404).send({
+                message: `Activity with id ${activityId} not found`
+            });
+        }
+
+        const totalStudents = activity.students?.length || 0;
+        console.log(`📊 [RefreshBelbin] Total estudiantes en actividad: ${totalStudents}`);
+
+        if (totalStudents === 0) {
+            console.log(`⚠️ [RefreshBelbin] No hay estudiantes en la actividad`);
+            return res.status(200).send({
+                message: "No students in activity",
+                data: {
+                    activityId,
+                    totalStudents: 0,
+                    completedBelbin: 0,
+                    allCompleted: false,
+                    algorithmStatus: 'not-configured'
+                }
+            });
+        }
+
+        // Verificar completitud de Belbin estudiante por estudiante
+        console.log(`🔍 [RefreshBelbin] Verificando completitud de test Belbin...`);
+        
+        let studentsWithBelbin = 0;
+        const studentDetails = [];
+
+        for (const studentId of activity.students || []) {
+            const student = await collections.users?.findOne({ _id: studentId });
+            if (student) {
+                const hasBelbin = student.askedQuestionnaires?.some(
+                    q => q.questionnaire.toString() === process.env.BELBIN_QUESTIONNAIRE_ID && q.result
+                );
+                if (hasBelbin) {
+                    studentsWithBelbin++;
+                }
+                studentDetails.push({
+                    id: studentId.toString(),
+                    name: student.name,
+                    email: student.email,
+                    hasBelbin: hasBelbin || false
+                });
+            }
+        }
+
+        const allCompleted = studentsWithBelbin === totalStudents;
+        const completionPercentage = totalStudents > 0 ? Math.round((studentsWithBelbin / totalStudents) * 100) : 0;
+
+        console.log(`📊 [RefreshBelbin] Estudiantes con Belbin: ${studentsWithBelbin}/${totalStudents} (${completionPercentage}%)`);
+        console.log(`✅ [RefreshBelbin] Todos completaron: ${allCompleted}`);
+
+        // Determinar nuevo estado del algoritmo
+        let newAlgorithmStatus = activity.algorithmStatus || 'not-configured';
+        const hasConfig = activity.algorithmConfig?.isConfigured;
+
+        if (hasConfig && allCompleted) {
+            newAlgorithmStatus = 'ready';
+        } else if (hasConfig && !allCompleted) {
+            newAlgorithmStatus = 'configured';
+        }
+
+        // Actualizar actividad solo si hay cambios
+        let wasUpdated = false;
+        if (activity.algorithmStatus !== newAlgorithmStatus) {
+            await collections.activities?.updateOne(
+                { _id: new ObjectId(activityId) },
+                { 
+                    $set: { 
+                        algorithmStatus: newAlgorithmStatus,
+                        updatedAt: new Date()
+                    }
+                }
+            );
+            wasUpdated = true;
+            console.log(`🔄 [RefreshBelbin] Estado actualizado: ${activity.algorithmStatus} → ${newAlgorithmStatus}`);
+        }
+
+        // Verificar si se puede generar archivo del algoritmo
+        let fileGenerated = false;
+        let filePath = null;
+
+        if (hasConfig && allCompleted) {
+            console.log(`🔄 [RefreshBelbin] Verificando generación de archivo de algoritmo...`);
+            await handleActivityChange(activityId, 'student-added', {
+                studentsWithBelbin,
+                totalStudents,
+                allCompleted,
+                checkedBy: authUserId,
+                checkedAt: new Date().toISOString()
+            });
+
+            fileGenerated = algorithmFileExists(activityId);
+            if (fileGenerated) {
+                filePath = generateAlgorithmFileName(activityId);
+                console.log(`✅ [RefreshBelbin] Archivo de algoritmo disponible: ${filePath}`);
+            }
+        }
+
+        // 🌐 WebSocket: Emitir evento de actualización al profesor
+        webSocketService.emitToUser(authUserId, 'activity-belbin-status-updated', {
+            activityId,
+            title: activity.title,
+            totalStudents,
+            completedBelbin: studentsWithBelbin,
+            completionPercentage,
+            allCompleted,
+            algorithmStatus: newAlgorithmStatus,
+            fileGenerated,
+            canRunAlgorithm: newAlgorithmStatus === 'ready' && fileGenerated,
+            wasUpdated,
+            timestamp: new Date().toISOString()
+        });
+
+        // 🌐 WebSocket: Emitir a estudiantes de la actividad si hay cambios importantes
+        if (activity.students?.length && (wasUpdated || allCompleted)) {
+            const studentIds = activity.students.map(id => id.toString());
+            webSocketService.emitToUsers(studentIds, 'activity-status-changed', {
+                activityId,
+                title: activity.title,
+                algorithmStatus: newAlgorithmStatus,
+                allStudentsCompleted: allCompleted,
+                message: allCompleted ? 
+                    'Todos los estudiantes han completado el test Belbin' :
+                    `${studentsWithBelbin}/${totalStudents} estudiantes han completado el test Belbin`,
+                timestamp: new Date().toISOString()
+            });
+        }
+
+        // Respuesta detallada
+        return res.status(200).send({
+            message: "Belbin status refreshed successfully",
+            data: {
+                activityId,
+                activityTitle: activity.title,
+                totalStudents,
+                completedBelbin: studentsWithBelbin,
+                completionPercentage,
+                allCompleted,
+                algorithmStatus: newAlgorithmStatus,
+                previousStatus: activity.algorithmStatus,
+                wasUpdated,
+                hasConfiguration: hasConfig,
+                fileGenerated,
+                filePath,
+                canRunAlgorithm: newAlgorithmStatus === 'ready' && fileGenerated,
+                studentDetails: studentDetails.map(s => ({
+                    name: s.name,
+                    email: s.email,
+                    hasBelbin: s.hasBelbin
+                })),
+                checkedAt: new Date().toISOString(),
+                checkedBy: authUserId
+            }
+        });
+
+    } catch (error: any) {
+        console.error(`💥 [RefreshBelbin] Error verificando estado Belbin:`, error);
+        return res.status(500).send({
+            message: "Error refreshing Belbin status",
+            error: error.message,
+            activityId
         });
     }
 });

@@ -1,8 +1,10 @@
 import express from 'express';
+import { createServer } from 'http';
 
 import { cookieSessionMiddleware, corsMiddleware, headersMiddleware, verifyToken as _vt, verifyToken } from './middlewares'
 
 import { connectToDatabase } from "./services/database.service"
+import { webSocketService } from './services/websocket.service';
 import { usersRouter } from "./routes/user.router";
 import { activitiesRouter } from "./routes/activity.router";
 import { questionnairesRouter } from './routes/questionnaires.router';
@@ -10,6 +12,7 @@ import { authRouter } from './routes/auth.router';
 import { debugRouter } from './routes/debug.router';
 
 const app = express();
+const server = createServer(app);
 const PORT = 3000;
 
 
@@ -28,6 +31,10 @@ app.get('/health', (_req, res) => {
 connectToDatabase()
     .then(() => {
         
+        // 🌐 Inicializar WebSocket Service
+        console.log('🚀 [TeamLens] Inicializando servicios enterprise...');
+        webSocketService.initialize(server);
+        
         // Router sin autenticación para debug (SOLO DESARROLLO)
         app.use("/debug", debugRouter);
         
@@ -37,11 +44,13 @@ connectToDatabase()
         app.use("/questionnaires", verifyToken, questionnairesRouter);
         app.use("/auth", authRouter);
 
-        app.listen(PORT, () => {
-            console.log(`Server started at http://localhost:${PORT}`);
+        server.listen(PORT, () => {
+            console.log(`🚀 [TeamLens] Servidor iniciado en http://localhost:${PORT}`);
+            console.log(`🌐 [WebSocket] Sistema de comunicación tiempo real activo`);
+            console.log(`📊 [Status] Servicios enterprise listos para producción`);
         });
     })
     .catch((error: Error) => {
-        console.error("Database connection failed", error);
+        console.error("❌ [Database] Conexión fallida:", error);
         process.exit();
     });

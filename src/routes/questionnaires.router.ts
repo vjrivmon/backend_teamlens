@@ -1,6 +1,7 @@
 import express, { Request, Response } from "express";
 import { ObjectId } from "mongodb";
 import { collections } from "../services/database.service";
+import { webSocketService } from "../services/websocket.service";
 import Questionnaire from "../models/questionnaire";
 import User from "../models/user";
 import { 
@@ -24,7 +25,6 @@ questionnairesRouter.get("/", async (_req: Request, res: Response) => {
 });
 
 questionnairesRouter.get("/asked", async (req: Request, res: Response) => {
-
     const authUserId = req.session?.authuser as string;
     
     try {
@@ -46,7 +46,6 @@ questionnairesRouter.get("/asked", async (req: Request, res: Response) => {
 });
 
 questionnairesRouter.get("/:id", async (req: Request, res: Response) => {
-
     const id = req?.params?.id;
 
     try {
@@ -65,11 +64,8 @@ questionnairesRouter.get("/:id", async (req: Request, res: Response) => {
 });
 
 questionnairesRouter.post("/", async (req: Request, res: Response) => {
-
     try {
-
         const newQuestionnaire = req.body as Questionnaire;
-
         const result = await collections.questionnaires?.insertOne(newQuestionnaire);
 
         result
@@ -89,7 +85,6 @@ questionnairesRouter.post("/", async (req: Request, res: Response) => {
 });
 
 questionnairesRouter.put("/:id", async (req: Request, res: Response) => {
-
     const id = req?.params?.id;
 
     try {
@@ -125,15 +120,11 @@ questionnairesRouter.put("/:id", async (req: Request, res: Response) => {
 });
 
 questionnairesRouter.put("/:id/submit", async (req: Request, res: Response) => {
-
     const id = req?.params?.id;
-
     const authUserId = req.session?.authuser as string;
 
     try {
-
         const authUserObjectId = new ObjectId(authUserId);
-
         const testValues = req.body;
 
         const result = await collections.questionnaires?.findOne<Questionnaire>({ _id: new ObjectId(id) });
@@ -142,10 +133,10 @@ questionnairesRouter.put("/:id/submit", async (req: Request, res: Response) => {
             res.status(404).send({
                 message: `Questionnaire with id ${id} does not exist`
             });
+            return;
         }
 
         if (result?.questionnaireType == "BELBIN") {
-
             const roles = getBelbinMainRoles(testValues);
             const belbinResult = Object.keys(roles[0])[0];
             const completionDate = new Date();
@@ -200,8 +191,24 @@ questionnairesRouter.put("/:id/submit", async (req: Request, res: Response) => {
                 const user = await collections.users?.findOne({ _id: authUserObjectId });
                 console.log(`📧 [Questionnaires] Email del usuario: ${user?.email} - Resultado: ${belbinResult}`);
                 
+                // 🌐 Notificar al estudiante sobre la completitud exitosa via WebSocket
+                const studentNotification = {
+                    title: "Test Belbin Completado",
+                    description: `Has completado exitosamente el test Belbin. Tu perfil es: ${belbinResult}`,
+                    type: 'belbin-completed',
+                    result: belbinResult,
+                    timestamp: completionDate.toISOString()
+                };
+                
+                webSocketService.emitToUser(
+                    authUserId, 
+                    'belbin-test-completed', 
+                    studentNotification
+                );
+                console.log(`🌐 [WebSocket] Notificación Belbin enviada al estudiante: ${user?.email}`);
+                
                 // 🔥 NUEVA FUNCIONALIDAD: Actualizar archivos JSON automáticamente
-                updateAlgorithmFilesForStudent(authUserId, user?.email || 'unknown');
+                await updateAlgorithmFilesForStudent(authUserId, user?.email || 'unknown');
                 
                 res.status(200).send({
                     message: "success", 
@@ -229,7 +236,6 @@ questionnairesRouter.put("/:id/submit", async (req: Request, res: Response) => {
 });
 
 questionnairesRouter.delete("/:id", async (req: Request, res: Response) => {
-
     const id = req?.params?.id;
 
     try {
@@ -319,14 +325,12 @@ questionnairesRouter.get("/activity/:activityId/stats", async (req: Request, res
     }
 });
 
-function getBelbinMainRoles(testValues: any) {
-
+function getBelbinMainRoles(testValues: any): any[] {
     const roleScore = new Array(Object.values(testValues).length + 1).fill(0);
 
     Object.values(testValues).forEach((value: any) => {
         for (let j = 0; j < Object.values(value).length; j++) {
             const v = Object.values(value)[j];
-            // console.log(roleScore[j], v);
             roleScore[j] = roleScore[j] + Number(v);
         }
     });
@@ -385,6 +389,15 @@ async function updateAlgorithmFilesForStudent(userId: string, userEmail: string)
                 });
 
                 console.log(`✅ [QuestionnaireBelbin] Cambio procesado para actividad: ${activity.title}`);
+
+                // 🌐 Notificar via WebSocket a profesores conectados sobre el cambio
+                webSocketService.emitToRole('teacher', 'student-belbin-completed', {
+                    activityId: activityId,
+                    activityTitle: activity.title,
+                    studentEmail: userEmail,
+                    studentId: userId,
+                    timestamp: new Date().toISOString()
+                });
 
             } catch (activityError: any) {
                 console.error(`💥 [QuestionnaireBelbin] Error procesando cambio para actividad ${activity.title}:`, activityError);

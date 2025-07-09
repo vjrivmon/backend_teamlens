@@ -1,6 +1,7 @@
 import express, { Request, Response } from "express";
 import { ObjectId } from "mongodb";
 import { collections } from "../services/database.service";
+import { webSocketService } from "../services/websocket.service";
 import User, { AskedQuestionnaire } from "../models/user";
 import Activity from "../models/activity";
 import Group from "../models/group";
@@ -141,6 +142,13 @@ usersRouter.patch("/notifications/:notificationId/read", async (req: Request, re
             return;
         }
 
+        // 🌐 WebSocket: Notificar cambio de estado en tiempo real
+        webSocketService.emitToUser(authUserId, 'notification-read', {
+            notificationId,
+            read: true,
+            timestamp: new Date().toISOString()
+        });
+
         console.log(`✅ Notificación ${notificationId} marcada como leída para usuario ${authUserId}`);
         res.status(200).send({ 
             message: `Notification ${notificationId} marked as read`,
@@ -180,6 +188,13 @@ usersRouter.patch("/notifications/:notificationId/unread", async (req: Request, 
             return;
         }
 
+        // 🌐 WebSocket: Notificar cambio de estado en tiempo real
+        webSocketService.emitToUser(authUserId, 'notification-unread', {
+            notificationId,
+            read: false,
+            timestamp: new Date().toISOString()
+        });
+
         console.log(`📩 Notificación ${notificationId} marcada como no leída para usuario ${authUserId}`);
         res.status(200).send({ 
             message: `Notification ${notificationId} marked as unread`,
@@ -215,6 +230,12 @@ usersRouter.delete("/notifications/:notificationId", async (req: Request, res: R
             return;
         }
 
+        // 🌐 WebSocket: Notificar eliminación en tiempo real
+        webSocketService.emitToUser(authUserId, 'notification-deleted', {
+            notificationId,
+            timestamp: new Date().toISOString()
+        });
+
         console.log(`🗑️ Notificación ${notificationId} eliminada para usuario ${authUserId}`);
         res.status(200).send({ 
             message: `Notification ${notificationId} deleted successfully`,
@@ -249,6 +270,12 @@ usersRouter.patch("/notifications/mark-all-read", async (req: Request, res: Resp
             return;
         }
 
+        // 🌐 WebSocket: Notificar que se marcaron todas como leídas
+        webSocketService.emitToUser(authUserId, 'all-notifications-read', {
+            userId: authUserId,
+            timestamp: new Date().toISOString()
+        });
+
         console.log(`📚 Todas las notificaciones marcadas como leídas para usuario ${authUserId}`);
         res.status(200).send({ 
             message: `All notifications marked as read for user ${authUserId}`,
@@ -279,6 +306,12 @@ usersRouter.post("/clear-notifications", async (req: Request, res: Response) => 
             res.status(404).send(`User with id ${authUserId} does not exist`);
             return;
         }
+
+        // 🌐 WebSocket: Notificar que se limpiaron todas las notificaciones
+        webSocketService.emitToUser(authUserId, 'all-notifications-cleared', {
+            userId: authUserId,
+            timestamp: new Date().toISOString()
+        });
 
         console.log(`🧹 Todas las notificaciones eliminadas para usuario ${authUserId}`);
         res.status(200).send({
@@ -329,6 +362,129 @@ usersRouter.get("/notifications/stats", async (req: Request, res: Response) => {
 
     } catch (error: any) {
         console.error('❌ Error al obtener estadísticas de notificaciones:', error.message);
+        res.status(400).send(error.message);
+    }
+});
+
+/**
+ * GET /users/notifications/real-time-status - Estado en tiempo real con timestamp
+ * Este endpoint permite al frontend verificar si hay cambios sin cargar todas las notificaciones
+ */
+usersRouter.get("/notifications/real-time-status", async (req: Request, res: Response) => {
+    const authUserId = req.session?.authuser as string;
+    const lastFetch = req.query.lastFetch as string;
+
+    try {
+        const user = await collections.users?.findOne<User>({ _id: new ObjectId(authUserId) });
+
+        if (!user) {
+            res.status(404).send(`User with id ${authUserId} does not exist`);
+            return;
+        }
+
+        const notifications = user.notifications || [];
+        const lastFetchTime = lastFetch ? new Date(lastFetch) : new Date(0);
+
+        // Verificar si hay notificaciones nuevas o actualizadas desde la última consulta
+        const hasUpdates = notifications.some(notification => {
+            const notificationTime = notification.updatedAt || notification.createdAt || notification.timestamp;
+            return notificationTime && new Date(notificationTime) > lastFetchTime;
+        });
+
+        const unreadCount = notifications.filter(n => !n.read).length;
+        const latestNotification = notifications
+            .sort((a, b) => {
+                const aTime = a.timestamp || a.createdAt || new Date(0);
+                const bTime = b.timestamp || b.createdAt || new Date(0);
+                return new Date(bTime).getTime() - new Date(aTime).getTime();
+            })[0];
+
+        const status = {
+            hasUpdates,
+            unreadCount,
+            totalCount: notifications.length,
+            latestNotification: latestNotification ? {
+                _id: latestNotification._id,
+                title: latestNotification.title,
+                timestamp: latestNotification.timestamp || latestNotification.createdAt
+            } : null,
+            serverTimestamp: new Date().toISOString(),
+            websocketConnected: webSocketService.isUserConnected(authUserId)
+        };
+
+        res.status(200).send(status);
+
+    } catch (error: any) {
+        console.error('❌ Error al obtener estado en tiempo real:', error.message);
+        res.status(400).send(error.message);
+    }
+});
+
+/**
+ * GET /users/notifications/quick-check - Verificación ultra-rápida para polling
+ * Solo retorna si hay cambios, optimizado para ser llamado frecuentemente
+ */
+usersRouter.get("/notifications/quick-check", async (req: Request, res: Response) => {
+    const authUserId = req.session?.authuser as string;
+    const lastCount = parseInt(req.query.lastCount as string) || 0;
+    const lastUnread = parseInt(req.query.lastUnread as string) || 0;
+
+    try {
+        const user = await collections.users?.findOne<User>(
+            { _id: new ObjectId(authUserId) },
+            { projection: { 'notifications.read': 1, 'notifications._id': 1 } }
+        );
+
+        if (!user) {
+            res.status(404).send(`User with id ${authUserId} does not exist`);
+            return;
+        }
+
+        const notifications = user.notifications || [];
+        const currentCount = notifications.length;
+        const currentUnread = notifications.filter(n => !n.read).length;
+
+        const hasChanges = currentCount !== lastCount || currentUnread !== lastUnread;
+
+        res.status(200).send({
+            hasChanges,
+            totalCount: currentCount,
+            unreadCount: currentUnread,
+            websocketConnected: webSocketService.isUserConnected(authUserId),
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error: any) {
+        console.error('❌ Error en verificación rápida:', error.message);
+        res.status(400).send(error.message);
+    }
+});
+
+/**
+ * GET /users/websocket-status - Estado de la conexión WebSocket del usuario
+ */
+usersRouter.get("/websocket-status", async (req: Request, res: Response) => {
+    const authUserId = req.session?.authuser as string;
+
+    try {
+        const isConnected = webSocketService.isUserConnected(authUserId);
+        const userInfo = webSocketService.getUserInfo(authUserId);
+        
+        const status = {
+            connected: isConnected,
+            userId: authUserId,
+            connectionInfo: userInfo ? {
+                connectedAt: userInfo.connectedAt,
+                email: userInfo.userEmail,
+                role: userInfo.userRole
+            } : null,
+            serverTime: new Date().toISOString()
+        };
+
+        res.status(200).send(status);
+
+    } catch (error: any) {
+        console.error('❌ Error al obtener estado WebSocket:', error.message);
         res.status(400).send(error.message);
     }
 });

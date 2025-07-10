@@ -1,0 +1,137 @@
+# ============================================================================
+# TeamLens Backend - Redis Configuration
+# Docker Compose para Redis con configuración empresarial
+# ============================================================================
+
+version: '3.8'
+
+services:
+  # ========================================================================
+  # REDIS - MESSAGE BROKER Y RESULT BACKEND
+  # ========================================================================
+  redis:
+    image: redis:7.2-alpine
+    container_name: teamlens_redis
+    restart: unless-stopped
+    
+    # Configuración de puertos
+    ports:
+      - "6379:6379"
+    
+    # Configuración de memoria y recursos
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    
+    # Variables de entorno
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-teamlens_redis_secure_password_2024}
+      - REDIS_DATABASES=16
+    
+    # Configuración de Redis optimizada para Celery
+    command: >
+      redis-server 
+      --appendonly yes 
+      --appendfsync everysec
+      --maxmemory 400mb
+      --maxmemory-policy allkeys-lru
+      --timeout 300
+      --tcp-keepalive 60
+      --databases 16
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --requirepass ${REDIS_PASSWORD:-teamlens_redis_secure_password_2024}
+    
+    # Volúmenes para persistencia
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    
+    # Health check empresarial
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-teamlens_redis_secure_password_2024}", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    
+    # Configuración de red
+    networks:
+      - teamlens_network
+
+  # ========================================================================
+  # REDIS COMMANDER - INTERFAZ WEB PARA DESARROLLO
+  # ========================================================================
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: teamlens_redis_commander
+    restart: unless-stopped
+    
+    # Solo en desarrollo
+    profiles:
+      - development
+    
+    ports:
+      - "8081:8081"
+    
+    environment:
+      - REDIS_HOSTS=local:redis:6379:0:${REDIS_PASSWORD:-teamlens_redis_secure_password_2024}
+      - HTTP_USER=admin
+      - HTTP_PASSWORD=${REDIS_COMMANDER_PASSWORD:-admin123}
+    
+    depends_on:
+      redis:
+        condition: service_healthy
+    
+    networks:
+      - teamlens_network
+
+  # ========================================================================
+  # FLOWER - MONITOREO DE CELERY
+  # ========================================================================
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile.flower
+    container_name: teamlens_flower
+    restart: unless-stopped
+    
+    ports:
+      - "5555:5555"
+    
+    environment:
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-teamlens_redis_secure_password_2024}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-teamlens_redis_secure_password_2024}@redis:6379/1
+      - FLOWER_BASIC_AUTH=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-flower123}
+      - FLOWER_PORT=5555
+    
+    depends_on:
+      redis:
+        condition: service_healthy
+    
+    networks:
+      - teamlens_network
+
+# ============================================================================
+# CONFIGURACIÓN DE VOLÚMENES Y REDES
+# ============================================================================
+volumes:
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/redis
+
+networks:
+  teamlens_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16 

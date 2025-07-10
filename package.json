@@ -34,14 +34,18 @@
     "typescript": "5.4.5"
   },
   "dependencies": {
+    "@types/ioredis": "^5.0.0",
     "@types/socket.io": "^3.0.2",
+    "@types/uuid": "^10.0.0",
     "bcrypt": "^5.1.1",
     "cookie-session": "^2.1.0",
     "cors": "^2.8.5",
     "express": "4.19.2",
+    "ioredis": "^5.6.1",
     "jsonwebtoken": "^9.0.2",
     "mongodb": "^6.6.1",
     "nodemailer": "^6.9.14",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "uuid": "^11.1.0"
   }
 }

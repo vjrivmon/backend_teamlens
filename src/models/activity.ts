@@ -46,11 +46,32 @@ export default class Activity {
         /** Configuración del algoritmo de formación de equipos */
         public algorithmConfig?: AlgorithmConfig,
         
-        /** Estado del algoritmo: 'not-configured' | 'configured' | 'ready' | 'running' | 'done' | 'error' */
+        /** Estado del algoritmo: 'not-configured' | 'configured' | 'ready' | 'running' | 'done' | 'error' | 'cancelled' */
         public algorithmStatus?: string,
         
         /** Resultado del último algoritmo ejecutado */
         public algorithmResult?: any,
+        
+        /** ID de la tarea de Celery en ejecución */
+        public algorithmTaskId?: string,
+        
+        /** ID de la request para tracking */
+        public algorithmRequestId?: string,
+        
+        /** Fecha de inicio del algoritmo */
+        public algorithmStartedAt?: Date,
+        
+        /** Fecha de finalización del algoritmo */
+        public algorithmCompletedAt?: Date,
+        
+        /** Fecha de cancelación del algoritmo */
+        public algorithmCancelledAt?: Date,
+        
+        /** Último heartbeat del algoritmo (para monitoreo) */
+        public algorithmLastHeartbeat?: Date,
+        
+        /** Error del algoritmo si falla */
+        public algorithmError?: any,
         
         /** Fecha de creación */
         public createdAt?: Date,

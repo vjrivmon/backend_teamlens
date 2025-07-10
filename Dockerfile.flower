@@ -1,0 +1,74 @@
+# ============================================================================
+# TeamLens Backend - Flower Dockerfile
+# Contenedor para monitoreo de Celery en tiempo real
+# ============================================================================
+
+FROM python:3.11-slim
+
+# Metadatos del contenedor
+LABEL maintainer="TeamLens Development Team"
+LABEL description="Flower monitoring for TeamLens Celery workers"
+LABEL version="1.0.0"
+
+# ============================================================================
+# CONFIGURACIÓN DEL SISTEMA
+# ============================================================================
+
+# Configurar variables de entorno
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Instalar dependencias del sistema
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# ============================================================================
+# INSTALACIÓN DE FLOWER Y DEPENDENCIAS
+# ============================================================================
+
+# Crear usuario no-root para seguridad
+RUN useradd --create-home --shell /bin/bash flower
+
+# Instalar Flower y dependencias
+RUN pip install --no-cache-dir \
+    flower==2.0.1 \
+    celery[redis]==5.3.0 \
+    redis==4.5.4
+
+# ============================================================================
+# CONFIGURACIÓN DE LA APLICACIÓN
+# ============================================================================
+
+# Crear directorio de trabajo
+WORKDIR /app
+
+# Cambiar al usuario flower
+USER flower
+
+# ============================================================================
+# CONFIGURACIÓN DE SALUD Y MONITOREO
+# ============================================================================
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:5555/ || exit 1
+
+# ============================================================================
+# CONFIGURACIÓN DE PUERTO Y COMANDO
+# ============================================================================
+
+# Exponer puerto de Flower
+EXPOSE 5555
+
+# Comando por defecto
+CMD ["flower", \
+     "--broker=${CELERY_BROKER_URL}", \
+     "--broker_api=${CELERY_BROKER_URL}", \
+     "--address=0.0.0.0", \
+     "--port=5555", \
+     "--basic_auth=${FLOWER_BASIC_AUTH}", \
+     "--persistent=true", \
+     "--db=/app/flower.db"] 

@@ -1,9 +1,15 @@
 import nodemailer from "nodemailer";
 import Mail from "nodemailer/lib/mailer";
+import fs from "fs";
+import path from "path";
 
 /**
- * Servicio de Email para TeamLens - Versión Corregida
- * Maneja el envío de correos electrónicos sin errores de compilación
+ * Servicio de Email para TeamLens - Versión Profesional
+ * Sistema completo de emails con templates HTML y configuración dinámica de URLs
+ * Implementa mejores prácticas de la industria para comunicación corporativa
+ * 
+ * @author TeamLens DevOps Team
+ * @version 2.0.0
  */
 
 interface EmailResult {
@@ -13,9 +19,23 @@ interface EmailResult {
     debugInfo?: any;
 }
 
+/**
+ * Configuración de URLs dinámicas para diferentes entornos
+ * Permite transición seamless entre desarrollo y producción
+ */
+interface UrlConfig {
+    frontend: string;
+    login: string;
+    register: string;
+    resetPassword: string;
+    questionnaire: string;
+}
+
 class EmailService {
     private isProduction: boolean;
     private emailConfig: any;
+    private urlConfig: UrlConfig;
+    private templatesPath: string;
 
     constructor() {
         this.isProduction = process.env.NODE_ENV === 'production';
@@ -28,9 +48,24 @@ class EmailService {
             from: "teamlens.app@gmail.com"
         };
         
-        console.log('📧 [EmailService] Inicializando servicio de email...');
+        // Configuración dinámica de URLs basada en variables de entorno
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:4200';
+        this.urlConfig = {
+            frontend: frontendUrl,
+            login: `${frontendUrl}/login`,
+            register: `${frontendUrl}/register`,
+            resetPassword: `${frontendUrl}/reset-password`,
+            questionnaire: `${frontendUrl}/questionnaire`
+        };
+        
+        // Ruta a los templates de email
+        this.templatesPath = path.join(__dirname, '..', 'templates', 'emails');
+        
+        console.log('📧 [EmailService] Inicializando servicio de email profesional v2.0...');
         console.log(`📧 [EmailService] Entorno: ${this.isProduction ? 'PRODUCCIÓN' : 'DESARROLLO'}`);
         console.log(`📧 [EmailService] Usuario configurado: ${this.emailConfig.user}`);
+        console.log(`🌐 [EmailService] Frontend URL: ${this.urlConfig.frontend}`);
+        console.log(`📁 [EmailService] Templates path: ${this.templatesPath}`);
     }
 
     /**
@@ -61,6 +96,63 @@ class EmailService {
             console.error('❌ [EmailService] Error creando transportador:', error);
             throw error;
         }
+    }
+
+    /**
+     * Carga un template HTML desde el sistema de archivos
+     * @param templateName Nombre del template (sin extensión)
+     * @returns Contenido HTML del template
+     */
+    private loadTemplate(templateName: string): string {
+        try {
+            const templatePath = path.join(this.templatesPath, `${templateName}.template.html`);
+            console.log(`📄 [EmailService] Cargando template: ${templatePath}`);
+            
+            if (!fs.existsSync(templatePath)) {
+                throw new Error(`Template ${templateName} no encontrado en ${templatePath}`);
+            }
+            
+            return fs.readFileSync(templatePath, 'utf-8');
+        } catch (error) {
+            console.error(`❌ [EmailService] Error cargando template ${templateName}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Combina el template base con el contenido específico del email
+     * @param content Contenido específico del email
+     * @param subject Asunto del email
+     * @returns HTML completo del email
+     */
+    private buildEmailHtml(content: string, subject: string): string {
+        try {
+            const baseTemplate = this.loadTemplate('base-email');
+            
+            return baseTemplate
+                .replace('{{CONTENT}}', content)
+                .replace('{{SUBJECT}}', subject);
+        } catch (error) {
+            console.error('❌ [EmailService] Error construyendo HTML del email:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Reemplaza variables en un template con valores reales
+     * @param template Template con variables {{VARIABLE}}
+     * @param variables Objeto con las variables a reemplazar
+     * @returns Template con variables reemplazadas
+     */
+    private replaceTemplateVariables(template: string, variables: Record<string, string>): string {
+        let processedTemplate = template;
+        
+        Object.entries(variables).forEach(([key, value]) => {
+            const placeholder = `{{${key}}}`;
+            processedTemplate = processedTemplate.replace(new RegExp(placeholder, 'g'), value);
+        });
+        
+        return processedTemplate;
     }
 
     /**
@@ -162,83 +254,202 @@ class EmailService {
 
     /**
      * Método especializado para enviar email de invitación a estudiantes
+     * Utiliza templates profesionales HTML con branding corporativo
      */
     public async sendStudentInvitation(email: string, invitationToken: string): Promise<EmailResult> {
-        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:4200';
-        const invitationUrl = `${frontendUrl}/register/${invitationToken}`;
-
-        const mailDetails: Mail.Options = {
-            to: email,
-            subject: '🎓 Invitación a TeamLens - Plataforma de Gestión de Equipos',
-            html: `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <meta charset="UTF-8">
-                    <title>Invitación a TeamLens</title>
-                </head>
-                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                    <div style="max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9;">
-                        <div style="background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-                            <h1 style="color: #2c3e50; text-align: center; margin-bottom: 30px;">
-                                🎓 Bienvenido a TeamLens
-                            </h1>
-                            
-                            <p style="font-size: 16px; margin-bottom: 20px;">
-                                ¡Hola! Has sido invitado a unirte a <strong>TeamLens</strong>, 
-                                nuestra plataforma de gestión de equipos educativos.
-                            </p>
-                            
-                            <p style="font-size: 16px; margin-bottom: 30px;">
-                                Para completar tu registro y acceder a la plataforma, 
-                                haz clic en el siguiente botón:
-                            </p>
-                            
-                            <div style="text-align: center; margin-bottom: 30px;">
-                                <a href="${invitationUrl}" 
-                                   style="background-color: #3498db; color: white; padding: 12px 30px; 
-                                          text-decoration: none; border-radius: 5px; font-weight: bold; 
-                                          display: inline-block;">
-                                    Completar Registro
-                                </a>
-                            </div>
-                            
-                            <p style="font-size: 14px; color: #666; margin-bottom: 20px;">
-                                Si el botón no funciona, copia y pega la siguiente URL en tu navegador:
-                            </p>
-                            
-                            <p style="font-size: 12px; color: #999; background-color: #f8f9fa; 
-                                      padding: 10px; border-radius: 4px; word-break: break-all;">
-                                ${invitationUrl}
-                            </p>
-                            
-                            <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
-                            
-                            <p style="font-size: 12px; color: #999; text-align: center;">
-                                Este es un mensaje automático de TeamLens. No respondas a este email.
-                            </p>
-                        </div>
-                    </div>
-                </body>
-                </html>
-            `,
-            text: `¡Hola! Has sido invitado a unirte a TeamLens.
+        try {
+            const invitationUrl = `${this.urlConfig.register}/${invitationToken}`;
+            
+            // Cargar template de invitación de estudiantes
+            const contentTemplate = this.loadTemplate('student-invitation');
+            
+            // Reemplazar variables del template
+            const processedContent = this.replaceTemplateVariables(contentTemplate, {
+                INVITATION_URL: invitationUrl
+            });
+            
+            // Construir HTML completo con template base
+            const subject = '🎓 Invitación a TeamLens - Plataforma de Gestión de Equipos';
+            const htmlContent = this.buildEmailHtml(processedContent, subject);
+            
+            const mailDetails: Mail.Options = {
+                to: email,
+                subject: subject,
+                html: htmlContent,
+                text: `¡Hola! Has sido invitado a unirte a TeamLens.
 
 Para completar tu registro, visita el siguiente enlace:
 ${invitationUrl}
 
 Este es un mensaje automático de TeamLens.`
-        };
+            };
 
-        console.log(`📧 [EmailService] Enviando invitación de estudiante a: ${email}`);
-        return await this.sendEmail(mailDetails);
+            console.log(`📧 [EmailService] Enviando invitación profesional de estudiante a: ${email}`);
+            console.log(`🔗 [EmailService] URL de invitación: ${invitationUrl}`);
+            
+            return await this.sendEmail(mailDetails);
+        } catch (error: any) {
+            console.error(`❌ [EmailService] Error enviando invitación de estudiante:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Envía email de recuperación de contraseña con template profesional
+     * @param email Email del usuario
+     * @param resetToken Token de reset
+     * @returns Resultado del envío
+     */
+    public async sendForgotPassword(email: string, resetToken: string): Promise<EmailResult> {
+        try {
+            const resetUrl = `${this.urlConfig.resetPassword}/${resetToken}`;
+            
+            // Cargar template de recuperación de contraseña
+            const contentTemplate = this.loadTemplate('forgot-password');
+            
+            // Reemplazar variables del template
+            const processedContent = this.replaceTemplateVariables(contentTemplate, {
+                RESET_URL: resetUrl
+            });
+            
+            // Construir HTML completo con template base
+            const subject = '🔐 Recuperación de Contraseña - TeamLens';
+            const htmlContent = this.buildEmailHtml(processedContent, subject);
+            
+            const mailDetails: Mail.Options = {
+                to: email,
+                subject: subject,
+                html: htmlContent,
+                text: `Hemos recibido una solicitud para restablecer la contraseña de tu cuenta en TeamLens.
+
+Para crear una nueva contraseña, visita el siguiente enlace (válido por 5 minutos):
+${resetUrl}
+
+Si no solicitaste este cambio, puedes ignorar este correo de forma segura.
+
+Este es un mensaje automático de TeamLens.`
+            };
+
+            console.log(`📧 [EmailService] Enviando email de recuperación de contraseña a: ${email}`);
+            console.log(`🔗 [EmailService] URL de reset: ${resetUrl}`);
+            
+            return await this.sendEmail(mailDetails);
+        } catch (error: any) {
+            console.error(`❌ [EmailService] Error enviando email de recuperación:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Envía confirmación de que la contraseña fue restablecida exitosamente
+     * @param email Email del usuario
+     * @returns Resultado del envío
+     */
+    public async sendPasswordResetConfirmation(email: string): Promise<EmailResult> {
+        try {
+            const loginUrl = this.urlConfig.login;
+            
+            // Cargar template de confirmación de reset
+            const contentTemplate = this.loadTemplate('password-reset-confirmation');
+            
+            // Reemplazar variables del template
+            const processedContent = this.replaceTemplateVariables(contentTemplate, {
+                LOGIN_URL: loginUrl
+            });
+            
+            // Construir HTML completo con template base
+            const subject = '✅ Contraseña Restablecida - TeamLens';
+            const htmlContent = this.buildEmailHtml(processedContent, subject);
+            
+            const mailDetails: Mail.Options = {
+                to: email,
+                subject: subject,
+                html: htmlContent,
+                text: `Tu contraseña en TeamLens ha sido restablecida exitosamente.
+
+Ahora puedes acceder a tu cuenta con tu nueva contraseña en:
+${loginUrl}
+
+Por seguridad, todas las sesiones activas han sido cerradas automáticamente.
+
+Si no realizaste esta acción, contacta inmediatamente a tu administrador del sistema.
+
+Este es un mensaje automático de TeamLens.`
+            };
+
+            console.log(`📧 [EmailService] Enviando confirmación de reset de contraseña a: ${email}`);
+            
+            return await this.sendEmail(mailDetails);
+        } catch (error: any) {
+            console.error(`❌ [EmailService] Error enviando confirmación de reset:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Envía recordatorio de cuestionario pendiente con template profesional
+     * @param email Email del estudiante
+     * @param questionnaireId ID del cuestionario
+     * @returns Resultado del envío
+     */
+    public async sendQuestionnaireReminder(email: string, questionnaireId: string): Promise<EmailResult> {
+        try {
+            const questionnaireUrl = `${this.urlConfig.questionnaire}/${questionnaireId}`;
+            
+            // Cargar template de recordatorio de cuestionario
+            const contentTemplate = this.loadTemplate('questionnaire-reminder');
+            
+            // Reemplazar variables del template
+            const processedContent = this.replaceTemplateVariables(contentTemplate, {
+                QUESTIONNAIRE_URL: questionnaireUrl
+            });
+            
+            // Construir HTML completo con template base
+            const subject = '📋 Cuestionario Pendiente - Acción Requerida - TeamLens';
+            const htmlContent = this.buildEmailHtml(processedContent, subject);
+            
+            const mailDetails: Mail.Options = {
+                to: email,
+                subject: subject,
+                html: htmlContent,
+                text: `Tu profesor ha solicitado que completes un cuestionario importante en TeamLens.
+
+Para acceder al cuestionario y completarlo, visita:
+${questionnaireUrl}
+
+Esta evaluación es fundamental para la formación de equipos equilibrados en tus próximas actividades académicas.
+
+Duración aproximada: 10-15 minutos
+Tu participación en las actividades del curso puede depender de completar este cuestionario.
+
+Este es un mensaje automático de TeamLens.`
+            };
+
+            console.log(`📧 [EmailService] Enviando recordatorio de cuestionario a: ${email}`);
+            console.log(`🔗 [EmailService] URL del cuestionario: ${questionnaireUrl}`);
+            
+            return await this.sendEmail(mailDetails);
+        } catch (error: any) {
+            console.error(`❌ [EmailService] Error enviando recordatorio de cuestionario:`, error);
+            throw error;
+        }
     }
 }
 
-// Exportar instancia singleton
+// Exportar instancia singleton con todas las funcionalidades profesionales
 const emailService = new EmailService();
 
+/**
+ * API pública del servicio de email con funcionalidades empresariales
+ * Proporciona métodos especializados para diferentes tipos de comunicación
+ */
 export default { 
+    // Método genérico para envío de emails
     sendEmail: (mailDetails: Mail.Options) => emailService.sendEmail(mailDetails),
-    sendStudentInvitation: (email: string, token: string) => emailService.sendStudentInvitation(email, token)
+    
+    // Métodos especializados con templates profesionales
+    sendStudentInvitation: (email: string, token: string) => emailService.sendStudentInvitation(email, token),
+    sendForgotPassword: (email: string, resetToken: string) => emailService.sendForgotPassword(email, resetToken),
+    sendPasswordResetConfirmation: (email: string) => emailService.sendPasswordResetConfirmation(email),
+    sendQuestionnaireReminder: (email: string, questionnaireId: string) => emailService.sendQuestionnaireReminder(email, questionnaireId)
 };

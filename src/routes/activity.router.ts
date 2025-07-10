@@ -1272,16 +1272,15 @@ activitiesRouter.post("/:id/send-questionnaire-remaining/:questionnaireId", asyn
         
         // console.log(studentsWhoDidNotAnswer);
 
-        studentsWhoDidNotAnswer?.forEach(async (student) => {
-            // se le envia un correo para que se registre
-            let mailDetails = {
-                to: student.email,
-                subject: 'Cuestionario pendiente',
-                text: `Tu profesor necesita que realices el siguiente cuestionario: http://localhost:4200/questionnaire/${questionnaireId}`
-            };
-
-            await emailService.sendEmail(mailDetails);
-        });
+        // Enviar recordatorios profesionales a cada estudiante
+        for (const student of studentsWhoDidNotAnswer || []) {
+            try {
+                await emailService.sendQuestionnaireReminder(student.email, questionnaireId);
+                console.log(`✅ [QuestionnaireReminder] Email enviado a: ${student.email}`);
+            } catch (error) {
+                console.error(`❌ [QuestionnaireReminder] Error enviando email a ${student.email}:`, error);
+            }
+        }
 
         return res.status(200).send({
             message: 'Mails sent successfully'

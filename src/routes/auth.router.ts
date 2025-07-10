@@ -155,14 +155,8 @@ authRouter.post("/forgot-password", async (req: Request, res: Response) => {
 
         await collections.users?.updateOne({ email: user.email }, { $set: { resetToken: token } });
 
-        let mailDetails = {
-            from: "dalfamosni@gmail.com",
-            to: user.email,
-            subject: 'Reset password',
-            text: `Please click on the following link to reset your password: http://localhost:4200/reset-password/${token}`
-        }
-
-        await emailService.sendEmail(mailDetails);
+        // Usar el nuevo método profesional de recuperación de contraseña
+        await emailService.sendForgotPassword(user.email, token);
 
         res.status(200).send({
             message: 'Email sent successfully'
@@ -207,13 +201,8 @@ authRouter.post("/reset-password", async (req: Request, res: Response) => {
             return
         }
 
-        let mailDetails = {
-            to: user.email,
-            subject: 'Reset password',
-            text: `Your password has been reset successfully. Please login with your new password.`
-        }
-
-        await emailService.sendEmail(mailDetails);
+        // Usar el nuevo método profesional de confirmación de reset de contraseña
+        await emailService.sendPasswordResetConfirmation(user.email);
 
         res.status(200).send({
             message: 'Email sent successfully'

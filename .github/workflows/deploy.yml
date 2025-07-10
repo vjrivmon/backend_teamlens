@@ -1,0 +1,62 @@
+name: Deploy Backend to Production
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy-backend:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js 20.x
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Build TypeScript
+      run: npm run build
+    
+    - name: Deploy to server
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT }}
+        script: |
+          echo "🚀 Iniciando deploy del backend..."
+          cd ~/teamlens/backend_teamlens
+          
+          # Backup de configuración crítica
+          cp .env.production .env.production.bak 2>/dev/null || true
+          
+          # Actualizar código (preservando configs)
+          git stash push -m "backup-configs" .env.production src/middlewares/cors.ts 2>/dev/null || true
+          git pull origin main
+          git stash pop 2>/dev/null || true
+          
+          # Instalar dependencias
+          npm ci
+          
+          # Build TypeScript
+          npm run build
+          
+          # Reiniciar servicio con PM2
+          pm2 reload teamlens-backend || pm2 start build/index.js --name teamlens-backend
+          pm2 save
+          
+          echo "✅ Backend desplegado y reiniciado exitosamente"
+          
+          # Verificar salud del servicio
+          sleep 5
+          curl -f http://localhost:3000/api/health || echo "⚠️ API no responde"
+          pm2 status teamlens-backend 

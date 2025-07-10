@@ -1,4 +1,12 @@
 
+# Backend TeamLens
+
+Backend API para la aplicación TeamLens de formación de equipos.
+
+## Deploy automático configurado ✅
+
+Esta línea fue añadida para probar el CI/CD automático - $(date)
+
 # Teamlens. Backend repository.
 
 This document provides an overview of the backend's project structure: key files, models, services, middlewares, routes, environment variables, scripts, and dependencies. The project is a Node.js application using TypeScript, Express, and MongoDB. It includes various models, routes, and services to manage users, activities, groups, and questionnaires.
@@ -453,3 +461,4 @@ exec(command, (error, stdout, stderr) => {
        parentPort.postMessage(stdout);
    });
    ```
+# Deploy test - 07/10/2025 23:24:52

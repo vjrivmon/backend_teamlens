@@ -6,51 +6,139 @@ import { collections } from "../services/database.service";
 
 import Group from "../models/group";
 import Activity from "../models/activity";
+import User from "../models/user";
 
 import { handleGroupStudentsRouter } from "./handle-group-students.router";
 
 import { createGroup, deleteGroup, getGroupsWithStudents } from "../functions/group-functions";
-import { verifyTeacher } from "../middlewares";
+import { verifyTeacher, verifyToken } from "../middlewares";
 
 import NotFoundError from "../functions/exceptions/NotFoundError";
 
 
 export const groupsRouter = express.Router({ mergeParams: true });
 
-
-groupsRouter.get("/", async (req: Request, res: Response) => {
-
+/**
+ * GET /activities/:activityId/groups
+ * Obtiene los grupos de una actividad con filtrado basado en roles:
+ * - Profesores: Ven todos los grupos de la actividad
+ * - Estudiantes: Solo ven los grupos a los que pertenecen
+ */
+groupsRouter.get("/", verifyToken, async (req: Request, res: Response) => {
     const { activityId } = req?.params;
+    const authUserId = (req as any).session?.authuser;
+
+    console.log(`👥 [Groups] Obteniendo grupos para actividad: ${activityId}, usuario: ${authUserId}`);
 
     try {
+        // Obtener información del usuario autenticado
+        const user = await collections.users?.findOne<User>({ _id: new ObjectId(authUserId) });
+        
+        if (!user) {
+            console.log(`❌ [Groups] Usuario no encontrado: ${authUserId}`);
+            res.status(404).send({ message: "User not found" });
+            return;
+        }
 
+        // Obtener todos los grupos de la actividad
         const query = { _id: new ObjectId(activityId) };
         const groupsId = (await collections.activities?.findOne<Activity>(query, { projection: { groups: 1 } }))?.groups;
 
-        const groups = groupsId ? await getGroupsWithStudents(groupsId) : []
+        if (!groupsId || groupsId.length === 0) {
+            console.log(`📋 [Groups] No hay grupos en la actividad: ${activityId}`);
+            res.status(200).send([]);
+            return;
+        }
 
-        res.status(200).send(groups);
+        // Obtener todos los grupos con estudiantes
+        const allGroups = await getGroupsWithStudents(groupsId);
+
+        if (!allGroups) {
+            console.log(`📋 [Groups] Error obteniendo grupos con estudiantes`);
+            res.status(500).send({ message: "Error retrieving groups" });
+            return;
+        }
+
+        let filteredGroups;
+
+        if (user.role === 'teacher') {
+            // Los profesores ven todos los grupos
+            filteredGroups = allGroups;
+            console.log(`👨‍🏫 [Groups] Profesor ${user.email}: devolviendo ${allGroups.length} grupos`);
+        } else {
+            // Los estudiantes solo ven los grupos donde están incluidos
+            const userObjectId = new ObjectId(authUserId);
+            filteredGroups = allGroups.filter(group => {
+                return group.students.some((student: any) => student._id.equals(userObjectId));
+            });
+            
+            console.log(`👨‍🎓 [Groups] Estudiante ${user.email}: devolviendo ${filteredGroups.length} grupos de ${allGroups.length} totales`);
+            
+            // Log adicional para debugging
+            if (filteredGroups.length > 0) {
+                filteredGroups.forEach((group: any) => {
+                    console.log(`   - Grupo: ${group.name} (${group._id})`);
+                });
+            } else {
+                console.log(`   - Estudiante no pertenece a ningún grupo en esta actividad`);
+            }
+        }
+
+        res.status(200).send(filteredGroups);
 
     } catch (error: any) {
+        console.error(`💥 [Groups] Error obteniendo grupos:`, error);
         res.status(500).send({
             message: error.message
         });
     }
 });
 
-groupsRouter.get("/:id", async (req: Request, res: Response) => {
-
+groupsRouter.get("/:id", verifyToken, async (req: Request, res: Response) => {
     const { id } = req?.params;
+    const authUserId = (req as any).session?.authuser;
+
+    console.log(`👥 [Groups] Obteniendo grupo individual: ${id}, usuario: ${authUserId}`);
 
     try {
+        // Obtener información del usuario autenticado
+        const user = await collections.users?.findOne<User>({ _id: new ObjectId(authUserId) });
+        
+        if (!user) {
+            console.log(`❌ [Groups] Usuario no encontrado: ${authUserId}`);
+            res.status(404).send({ message: "User not found" });
+            return;
+        }
 
         const group = await getGroupsWithStudents([new ObjectId(id)]) ?? [];
 
         if (group?.length > 0) {
-            res.status(200).send(group[0]);
+            const foundGroup = group[0];
+
+            // Aplicar filtrado basado en rol
+            if (user.role === 'teacher') {
+                // Los profesores pueden ver cualquier grupo
+                console.log(`👨‍🏫 [Groups] Profesor ${user.email}: accediendo grupo ${foundGroup.name}`);
+                res.status(200).send(foundGroup);
+            } else {
+                // Los estudiantes solo pueden ver grupos donde están incluidos
+                const userObjectId = new ObjectId(authUserId);
+                const canAccess = foundGroup.students.some((student: any) => student._id.equals(userObjectId));
+                
+                if (canAccess) {
+                    console.log(`👨‍🎓 [Groups] Estudiante ${user.email}: accediendo a su grupo ${foundGroup.name}`);
+                    res.status(200).send(foundGroup);
+                } else {
+                    console.log(`❌ [Groups] Estudiante ${user.email}: acceso denegado al grupo ${foundGroup.name}`);
+                    res.status(403).send({ message: "Access denied to this group" });
+                }
+            }
+        } else {
+            res.status(404).send({ message: `Group with id ${id} not found` });
         }
 
     } catch (error) {
+        console.error(`💥 [Groups] Error obteniendo grupo individual:`, error);
         res.status(404).send({
             message: `Unable to find matching document with id: ${id}`
         });

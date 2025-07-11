@@ -21,8 +21,31 @@ app.use(cookieSessionMiddleware)
 app.use(corsMiddleware)
 app.use(headersMiddleware);
 
+// ============================================================================
+// ENDPOINT DE HEALTH CHECK EMPRESARIAL
+// ============================================================================
 app.get('/health', (_req, res) => {
-    res.send(process.env.ENVIROMENT);
+    const healthInfo = {
+        status: 'healthy',
+        environment: process.env.ENVIROMENT || process.env.NODE_ENV || 'unknown',
+        timestamp: new Date().toISOString(),
+        config: {
+            frontend_url: process.env.FRONTEND_URL || 'not_configured',
+            port: process.env.PORT || '3000',
+            node_env: process.env.NODE_ENV || 'unknown'
+        },
+        version: '2.0.0'
+    };
+    
+    res.status(200).json(healthInfo);
+});
+
+// Endpoint legacy (mantener compatibilidad)
+app.get('/api/health', (_req, res) => {
+    res.status(200).json({ 
+        status: 'healthy', 
+        environment: process.env.ENVIROMENT || process.env.NODE_ENV 
+    });
 });
 
 //TODO: check if environment variables exist before start the server

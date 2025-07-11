@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "ts-node-dev --env-file .env-dev src/index.ts",
     "start": "node --env-file .env build/index.js",
+    "start:prod": "node --env-file .env.production build/index.js",
+    "build": "tsc",
     "tsc": "tsc",
     "test": "jest",
     "test:watch": "jest --watch",

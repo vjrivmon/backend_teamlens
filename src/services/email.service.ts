@@ -66,6 +66,15 @@ class EmailService {
         console.log(`📧 [EmailService] Usuario configurado: ${this.emailConfig.user}`);
         console.log(`🌐 [EmailService] Frontend URL: ${this.urlConfig.frontend}`);
         console.log(`📁 [EmailService] Templates path: ${this.templatesPath}`);
+        
+        // ⚠️ VERIFICACIÓN CRÍTICA PARA PRODUCCIÓN
+        if (this.isProduction && this.urlConfig.frontend.includes('localhost')) {
+            console.error('🚨 [EmailService] ERROR CRÍTICO: Frontend URL contiene localhost en PRODUCCIÓN!');
+            console.error(`🚨 [EmailService] URL problemática: ${this.urlConfig.frontend}`);
+            console.error('🚨 [EmailService] Verificar variable FRONTEND_URL en .env.production');
+        } else if (this.isProduction) {
+            console.log(`✅ [EmailService] URL de producción configurada correctamente: ${this.urlConfig.frontend}`);
+        }
     }
 
     /**

@@ -1,62 +1,144 @@
-name: Deploy Backend to Production
+name: 🚀 Deploy Backend TeamLens to Production v2.1
 
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:  # Permitir ejecución manual
 
 jobs:
+  # ============================================================================
+  # BACKEND DEPLOYMENT
+  # ============================================================================
   deploy-backend:
+    name: 🔧 Deploy Backend
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     
     steps:
-    - name: Checkout code
+    - name: 📦 Checkout Repository
       uses: actions/checkout@v4
     
-    - name: Setup Node.js 20.x
+    - name: 🔧 Setup Node.js 20.x
       uses: actions/setup-node@v4
       with:
         node-version: '20.x'
         cache: 'npm'
     
-    - name: Install dependencies
+    - name: 📋 Install Backend Dependencies
       run: npm ci
     
-    - name: Build TypeScript
+    - name: 🔨 Build TypeScript
       run: npm run build
     
-    - name: Deploy to server
+    - name: 🚀 Deploy Backend to Server
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.HOST }}
         username: ${{ secrets.USERNAME }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: ${{ secrets.PORT }}
+        timeout: 30s
+        command_timeout: 3m
         script: |
-          echo "🚀 Iniciando deploy del backend..."
+          echo "🚀 [v2.1-$(date +%H%M%S)] Iniciando deploy del backend TeamLens..."
+          echo "🔍 Verificando conectividad y configuración..."
+          whoami
+          pwd
           cd ~/teamlens/backend_teamlens
           
-          # Backup de configuración crítica
-          cp .env.production .env.production.bak 2>/dev/null || true
+          # Verificar que existe el archivo de configuración de producción
+          if [ ! -f ".env.production" ]; then
+            echo "❌ Error: Archivo .env.production no encontrado"
+            exit 1
+          fi
           
-          # Actualizar código (preservando configs)
-          git stash push -m "backup-configs" .env.production src/middlewares/cors.ts 2>/dev/null || true
+          # Backup de configuración crítica con timestamp
+          echo "💾 Creando backup de configuración..."
+          cp .env.production .env.production.backup.$(date +%Y%m%d_%H%M%S) 2>/dev/null || true
+          
+          # Actualizar código (preservando configuraciones críticas)
+          echo "📥 Actualizando código desde repositorio..."
+          git stash push -m "backup-configs-$(date +%Y%m%d_%H%M%S)" .env.production 2>/dev/null || true
           git pull origin main
           git stash pop 2>/dev/null || true
           
-          # Instalar dependencias
-          npm ci
+          # Verificar integridad del package.json
+          if [ ! -f "package.json" ]; then
+            echo "❌ Error: package.json no encontrado"
+            exit 1
+          fi
           
-          # Build TypeScript
-          npm run build
+          # Instalar dependencias con timeout
+          echo "📦 Instalando dependencias..."
+          timeout 180 npm ci || {
+            echo "❌ Error: Timeout en instalación de dependencias"
+            exit 1
+          }
           
-          # Reiniciar servicio con PM2
-          pm2 reload teamlens-backend || pm2 start build/index.js --name teamlens-backend
-          pm2 save
+          # Build TypeScript con verificación
+          echo "🔨 Compilando TypeScript..."
+          npm run build || {
+            echo "❌ Error: Falló la compilación de TypeScript"
+            exit 1
+          }
           
-          echo "✅ Backend desplegado y reiniciado exitosamente"
+          # Verificar que el build fue exitoso
+          if [ ! -f "build/index.js" ]; then
+            echo "❌ Error: build/index.js no fue generado"
+            exit 1
+          fi
           
-          # Verificar salud del servicio
-          sleep 5
-          curl -f http://localhost:3000/api/health || echo "⚠️ API no responde"
-          pm2 status teamlens-backend 
+          # Gestión inteligente de PM2 con restart completo
+          echo "🔄 Gestionando proceso PM2..."
+          
+          # Detener procesos existentes para forzar recarga de .env
+          pm2 delete teamlens-backend 2>/dev/null || echo "🔄 No había proceso previo"
+          
+          # Verificar variables de entorno antes del start
+          echo "🔍 Verificando configuración de producción..."
+          if grep -q "FRONTEND_URL.*teamlens.gti-ia.dsic.upv.es" .env.production; then
+            echo "✅ Configuración de URLs verificada"
+          else
+            echo "⚠️ Advertencia: Verificar configuración de FRONTEND_URL"
+          fi
+          
+          # Iniciar proceso con archivo .env.production específico
+          echo "🚀 Iniciando proceso con configuración de producción..."
+          pm2 start npm --name teamlens-backend -- run start:prod || {
+            echo "❌ Error: No se pudo iniciar el proceso con PM2"
+            echo "📋 Intentando diagnóstico..."
+            pm2 logs teamlens-backend --lines 10
+            exit 1
+          }
+          
+          # Guardar configuración PM2
+          pm2 save || echo "⚠️ Advertencia: No se pudo guardar configuración PM2"
+          
+          echo "✅ Backend desplegado y proceso iniciado exitosamente"
+          
+          # Verificación de salud del servicio y configuración
+          echo "🩺 Verificando salud del servicio..."
+          sleep 10
+          
+          # Verificar que el API responde
+          if curl -f http://localhost:3000/health 2>/dev/null > /tmp/health_check.json; then
+            echo "✅ API responde correctamente"
+            
+            # Verificar que la configuración de FRONTEND_URL sea correcta
+            if grep -q "teamlens.gti-ia.dsic.upv.es" /tmp/health_check.json; then
+              echo "✅ Configuración de URL verificada en health check"
+            else
+              echo "⚠️ Advertencia: Verificar configuración de FRONTEND_URL en respuesta API"
+              cat /tmp/health_check.json
+            fi
+          else
+            echo "❌ API no responde - verificando logs..."
+            pm2 logs teamlens-backend --lines 20
+            echo "⚠️ Servicio iniciado pero API no responde"
+          fi
+          
+          # Status final
+          echo "📊 Estado final del proceso:"
+          pm2 status teamlens-backend || echo "⚠️ Error obteniendo status de PM2"
+          
+          echo "🎉 Deploy del backend completado - Timestamp: $(date)" 

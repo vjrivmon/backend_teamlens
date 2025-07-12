@@ -12,10 +12,11 @@
  * - Sistema de eventos robusto
  */
 
+import { Server as SocketIOServer } from 'socket.io';
 import { Server as HTTPServer } from 'http';
-import { Server as SocketIOServer, Socket } from 'socket.io';
-import { ObjectId } from 'mongodb';
+import { Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
+import { ObjectId } from 'mongodb';
 import { collections } from './database.service';
 
 interface ConnectedUser {
@@ -28,13 +29,30 @@ interface ConnectedUser {
     lastActivity: Date;
 }
 
-interface NotificationEvent {
-    type: 'notification' | 'activity-update' | 'belbin-completed' | 'algorithm-status';
-    data: any;
-    userId?: string;
-    targetUsers?: string[];
-    broadcast?: boolean;
+interface NotificationPayload {
+    type: string;
+    message: string;
+    data?: any;
+    timestamp?: string;
 }
+
+interface GroupNotificationPayload extends NotificationPayload {
+    groupId: string;
+    groupName: string;
+    activityId?: string;
+}
+
+interface ActivityNotificationPayload extends NotificationPayload {
+    activityId: string;
+    activityName: string;
+    groupId?: string;
+}
+
+/**
+ * ==========================================================================
+ * SERVICIO WEBSOCKET ENTERPRISE - COMUNICACIÓN TIEMPO REAL
+ * ==========================================================================
+ */
 
 class WebSocketService {
     private io: SocketIOServer | null = null;
@@ -48,13 +66,30 @@ class WebSocketService {
     public initialize(server: HTTPServer): void {
         console.log('🌐 [WebSocket] Inicializando servicio WebSocket...');
 
+        // Configuración dinámica de CORS basada en el entorno
+        const isProduction = process.env.NODE_ENV === 'production';
+        const productionOrigin = process.env.FRONTEND_URL || 'http://teamlens.gti-ia.dsic.upv.es';
+
+        const allowedOrigins = [
+            "http://localhost:4200",  // Desarrollo
+            "http://localhost:3000",  // Desarrollo alternativo
+            productionOrigin,         // Producción
+            "http://teamlens.gti-ia.dsic.upv.es"  // Producción explícita
+        ];
+
+        console.log(`🌐 [WebSocket] Configurando orígenes permitidos:`, allowedOrigins);
+        console.log(`🌐 [WebSocket] Entorno: ${isProduction ? 'PRODUCCIÓN' : 'DESARROLLO'}`);
+
         this.io = new SocketIOServer(server, {
             cors: {
-                origin: ["http://localhost:4200"],
+                origin: allowedOrigins,
                 methods: ["GET", "POST"],
-                credentials: true
+                credentials: true,
+                allowedHeaders: ["Authorization", "Content-Type"]
             },
-            transports: ['websocket', 'polling']
+            transports: ['websocket', 'polling'],
+            pingTimeout: 60000,
+            pingInterval: 25000
         });
 
         // Middleware de autenticación

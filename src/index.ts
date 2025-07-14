@@ -1,5 +1,6 @@
 import express from 'express';
 import { createServer } from 'http';
+import path from 'path';
 
 import { cookieSessionMiddleware, corsMiddleware, headersMiddleware, verifyToken as _vt, verifyToken } from './middlewares'
 
@@ -66,6 +67,86 @@ connectToDatabase()
         app.use("/activities", verifyToken, activitiesRouter);
         app.use("/questionnaires", verifyToken, questionnairesRouter);
         app.use("/auth", authRouter);
+
+        // ============================================================================
+        // CONFIGURACIÓN EMPRESARIAL PARA SPA (SINGLE PAGE APPLICATION)
+        // ============================================================================
+        
+        // 🚀 ACTIVAR SPA FALLBACK SIEMPRE (solución al problema de pantalla negra)
+        const shouldEnableSPA = true; // Anteriormente: process.env.NODE_ENV === 'production'
+        
+        if (shouldEnableSPA) {
+            // 📁 Servir archivos estáticos de Angular
+            const angularDistPath = path.join(__dirname, '../../../frontend_build');
+            
+            console.log(`🎯 [SPA] Sirviendo archivos estáticos desde: ${angularDistPath}`);
+            
+            // Verificar que el directorio existe
+            try {
+                const fs = require('fs');
+                if (!fs.existsSync(angularDistPath)) {
+                    console.log(`⚠️ [SPA] Directorio no encontrado: ${angularDistPath}`);
+                    console.log(`⚠️ [SPA] SPA fallback desactivado - frontend no disponible`);
+                    return;
+                }
+                console.log(`✅ [SPA] Directorio frontend encontrado: ${angularDistPath}`);
+            } catch (error) {
+                console.error(`❌ [SPA] Error verificando directorio:`, error);
+                return;
+            }
+            
+            app.use(express.static(angularDistPath, {
+                maxAge: '1h', // Cache de 1 hora para assets
+                etag: true,
+                lastModified: true,
+                index: false // No servir index.html automáticamente
+            }));
+            
+            // ⚡ Fallback para rutas SPA - Enviar index.html para rutas no-API
+            app.get('*', (req, res, next) => {
+                console.log(`🔍 [SPA] Evaluando ruta: ${req.path}`);
+                console.log(`🔍 [SPA] Headers: Accept=${req.headers.accept}`);
+                
+                // Si es una ruta de API, pasar al siguiente middleware
+                if (req.path.startsWith('/api/') || 
+                    req.path.startsWith('/users/') || 
+                    req.path.startsWith('/activities/') || 
+                    req.path.startsWith('/questionnaires/') || 
+                    req.path.startsWith('/auth/') || 
+                    req.path.startsWith('/debug/') ||
+                    req.path.startsWith('/health')) {
+                    console.log(`🔄 [SPA] Ruta API detectada: ${req.path} - pasando a siguiente middleware`);
+                    return next();
+                }
+                
+                // Para rutas del frontend, servir index.html
+                const indexPath = path.join(angularDistPath, 'index.html');
+                console.log(`🔄 [SPA] Sirviendo index.html para ruta: ${req.path}`);
+                console.log(`🔄 [SPA] Path completo: ${indexPath}`);
+                
+                res.sendFile(indexPath, (err) => {
+                    if (err) {
+                        console.error(`❌ [SPA] Error sirviendo index.html:`, err);
+                        console.error(`❌ [SPA] Path intentado: ${indexPath}`);
+                        res.status(500).json({ 
+                            error: 'Error interno del servidor',
+                            message: 'No se pudo cargar la aplicación',
+                            debug: {
+                                path: indexPath,
+                                originalUrl: req.originalUrl,
+                                method: req.method
+                            }
+                        });
+                    } else {
+                        console.log(`✅ [SPA] index.html servido exitosamente para ${req.path}`);
+                    }
+                });
+            });
+            
+            console.log(`✅ [SPA] Configuración SPA activada - Sirviendo Angular desde Express`);
+        } else {
+            console.log(`🚧 [SPA] SPA fallback desactivado`);
+        }
 
         server.listen(PORT, () => {
             console.log(`🚀 [TeamLens] Servidor iniciado en http://localhost:${PORT}`);

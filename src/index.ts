@@ -146,19 +146,25 @@ connectToDatabase()
                 console.log(`🔍 [SPA] Evaluando ruta: ${req.path}`);
                 console.log(`🔍 [SPA] Headers: Accept=${req.headers.accept}`);
                 
-                // Si es una ruta de API, pasar al siguiente middleware
-                if (req.path.startsWith('/api/') || 
+                // ✅ LÓGICA CORREGIDA: Solo pasar a API las rutas específicas, no todas las que empiecen con /activities/
+                const isApiRoute = 
+                    req.path.startsWith('/api/') || 
                     req.path.startsWith('/users/') || 
-                    req.path.startsWith('/activities/') || 
                     req.path.startsWith('/questionnaires/') || 
                     req.path.startsWith('/auth/') || 
                     req.path.startsWith('/debug/') ||
-                    req.path.startsWith('/health')) {
+                    req.path.startsWith('/health') ||
+                    // Solo estas rutas específicas de activities son API
+                    req.path === '/activities' ||
+                    (req.path.startsWith('/activities/') && req.method !== 'GET') ||
+                    req.path.startsWith('/activities/api/');
+                
+                if (isApiRoute) {
                     console.log(`🔄 [SPA] Ruta API detectada: ${req.path} - pasando a siguiente middleware`);
                     return next();
                 }
                 
-                // Para rutas del frontend, servir index.html
+                // Para rutas del frontend (incluyendo /activities/ID), servir index.html
                 const indexPath = path.join(angularDistPath, 'index.html');
                 console.log(`🔄 [SPA] Sirviendo index.html para ruta: ${req.path}`);
                 console.log(`🔄 [SPA] Path completo: ${indexPath}`);

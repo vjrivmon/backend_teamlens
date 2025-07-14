@@ -77,7 +77,10 @@ connectToDatabase()
         
         if (shouldEnableSPA) {
             // 📁 Servir archivos estáticos de Angular
-            const angularDistPath = path.join(__dirname, '../../../frontend_build');
+            // El script deploy crea ./frontend_build desde el root del proyecto
+            // __dirname es /home/gti/teamlens/backend_teamlens/build
+            // Necesitamos ir a /home/gti/teamlens/frontend_build
+            let angularDistPath = path.join(__dirname, '../../frontend_build');
             
             console.log(`🎯 [SPA] Sirviendo archivos estáticos desde: ${angularDistPath}`);
             
@@ -86,21 +89,57 @@ connectToDatabase()
                 const fs = require('fs');
                 if (!fs.existsSync(angularDistPath)) {
                     console.log(`⚠️ [SPA] Directorio no encontrado: ${angularDistPath}`);
-                    console.log(`⚠️ [SPA] SPA fallback desactivado - frontend no disponible`);
-                    return;
+                    console.log(`🔍 [SPA] __dirname actual: ${__dirname}`);
+                    console.log(`🔍 [SPA] Path calculado: ${angularDistPath}`);
+                    
+                    // Intentar paths alternativos
+                    const alternativePaths = [
+                        path.join(__dirname, '../frontend_build'),
+                        path.join(__dirname, '../../../frontend_build'),
+                        '/home/gti/teamlens/frontend_build'
+                    ];
+                    
+                    let foundPath = null;
+                    for (const altPath of alternativePaths) {
+                        if (fs.existsSync(altPath)) {
+                            console.log(`✅ [SPA] Directorio encontrado en path alternativo: ${altPath}`);
+                            foundPath = altPath;
+                            break;
+                        } else {
+                            console.log(`❌ [SPA] Path alternativo no existe: ${altPath}`);
+                        }
+                    }
+                    
+                    if (!foundPath) {
+                        console.log(`⚠️ [SPA] SPA fallback desactivado - frontend no disponible`);
+                        console.log(`🚧 [SPA] Funcionando solo con Nginx proxy`);
+                        return;
+                    } else {
+                        // Usar el path encontrado
+                        angularDistPath = foundPath;
+                        console.log(`🔄 [SPA] Usando path corregido: ${angularDistPath}`);
+                        
+                        app.use(express.static(angularDistPath, {
+                            maxAge: '1h',
+                            etag: true,
+                            lastModified: true,
+                            index: false
+                        }));
+                    }
+                } else {
+                    console.log(`✅ [SPA] Directorio frontend encontrado: ${angularDistPath}`);
+                    
+                    app.use(express.static(angularDistPath, {
+                        maxAge: '1h', // Cache de 1 hora para assets
+                        etag: true,
+                        lastModified: true,
+                        index: false // No servir index.html automáticamente
+                    }));
                 }
-                console.log(`✅ [SPA] Directorio frontend encontrado: ${angularDistPath}`);
             } catch (error) {
                 console.error(`❌ [SPA] Error verificando directorio:`, error);
                 return;
             }
-            
-            app.use(express.static(angularDistPath, {
-                maxAge: '1h', // Cache de 1 hora para assets
-                etag: true,
-                lastModified: true,
-                index: false // No servir index.html automáticamente
-            }));
             
             // ⚡ Fallback para rutas SPA - Enviar index.html para rutas no-API
             app.get('*', (req, res, next) => {

@@ -66,7 +66,7 @@ activitiesRouter.get("/:id", async (req: Request, res: Response) => {
                 message: `Unable to find matching document with id: ${id}`
             });
         } else {
-            console.log(`✅ [Activities] Actividad encontrada: ${activity.name}`);
+            console.log(`✅ [Activities] Actividad encontrada: ${activity.title}`);
             res.status(200).send(activity);
         }
 

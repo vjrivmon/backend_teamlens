@@ -169,17 +169,17 @@ questionnairesRouter.put("/:id/submit-anonymous", async (req: Request, res: Resp
             
             const tempUser = {
                 email: email,
-                role: "student",
                 name: email.split('@')[0], // Usar parte del email como nombre temporal
-                lastName: "Estudiante",
-                birthDate: new Date().toISOString(),
-                traits: [],
-                activities: [],
+                password: "ANONYMOUS_USER_NO_PASSWORD", // Password temporal para usuarios anónimos
+                role: "student",
                 askedQuestionnaires: [],
+                activities: [],
                 groups: [],
-                notifications: [],
+                resetToken: "",
                 invitationToken: "", // Usuario ya "registrado" vía cuestionario
-                isTemporary: true // Marcador para usuarios creados automáticamente
+                notifications: [],
+                isTemporary: true, // Marcador para usuarios creados automáticamente
+                createdAt: new Date()
             };
 
             const result = await collections.users?.insertOne(tempUser);

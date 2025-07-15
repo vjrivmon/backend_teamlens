@@ -282,3 +282,127 @@ authRouter.patch("/promote-to-teacher", async (req: Request, res: Response) => {
         });
     }
 });
+
+/**
+ * 🔧 ENDPOINT TEMPORAL DE DIAGNÓSTICO DE EMAILS
+ * Este endpoint permite probar el sistema de envío de emails en tiempo real
+ * Para detectar problemas con SMTP, templates o configuración
+ * 
+ * @route POST /auth/debug-email
+ * @body { email: string, type: 'invitation' | 'test' }
+ * @returns Estado detallado del envío de email
+ */
+authRouter.post("/debug-email", async (req: Request, res: Response): Promise<void> => {
+    try {
+        console.log(`🔧 [Auth Debug] Iniciando test de envío de email...`);
+        
+        const { email, type = 'test' } = req.body;
+        
+        if (!email || !email.includes('@')) {
+            res.status(400).send({
+                success: false,
+                error: 'Email válido es requerido',
+                example: { email: 'test@example.com', type: 'invitation' }
+            });
+            return;
+        }
+
+        console.log(`📧 [Auth Debug] Probando envío a: ${email}, tipo: ${type}`);
+        
+        // Verificar configuración de email service
+        const emailConfig = {
+            user: process.env.EMAIL_USER,
+            password: process.env.EMAIL_PASSWORD ? '[CONFIGURADA]' : '[NO CONFIGURADA]',
+            frontendUrl: process.env.FRONTEND_URL,
+            nodeEnv: process.env.NODE_ENV
+        };
+        
+        console.log(`⚙️ [Auth Debug] Configuración actual:`, emailConfig);
+        
+        let emailResult;
+        
+        if (type === 'invitation') {
+            // Simular envío de invitación completa
+            console.log(`🎓 [Auth Debug] Simulando invitación de estudiante...`);
+            
+            // Generar token temporal para la prueba
+            const testToken = jwt.sign(
+                { email: email, type: 'invitation', debug: true },
+                process.env.JWT_SECRET ?? "secret",
+                { expiresIn: '1h' }
+            );
+            
+            emailResult = await emailService.sendStudentInvitation(email, testToken);
+            
+        } else {
+            // Envío de email de prueba básico
+            console.log(`🧪 [Auth Debug] Enviando email de prueba básico...`);
+            
+            emailResult = await emailService.sendEmail({
+                to: email,
+                subject: '🧪 Test de TeamLens - Sistema de Emails',
+                html: `
+                    <h2>✅ Test de Email Exitoso</h2>
+                    <p>Si recibes este email, el sistema de TeamLens está funcionando correctamente.</p>
+                    <p><strong>Fecha:</strong> ${new Date().toLocaleString()}</p>
+                    <p><strong>Servidor:</strong> ${process.env.NODE_ENV || 'desarrollo'}</p>
+                    <p><strong>Frontend URL:</strong> ${process.env.FRONTEND_URL}</p>
+                    <hr>
+                    <p style="color: #666; font-size: 12px;">
+                        Este es un email de prueba del sistema TeamLens. 
+                        Si no esperabas este mensaje, puedes ignorarlo.
+                    </p>
+                `,
+                text: `Test de TeamLens - Sistema funcionando correctamente en ${new Date().toLocaleString()}`
+            });
+        }
+        
+        console.log(`📊 [Auth Debug] Resultado del envío:`, emailResult);
+        
+        // Respuesta detallada para debugging
+        const response = {
+            success: emailResult.success,
+            messageId: emailResult.messageId,
+            timestamp: new Date().toISOString(),
+            config: emailConfig,
+            emailDetails: {
+                to: email,
+                type: type,
+                frontendUrl: process.env.FRONTEND_URL
+            },
+            ...(emailResult.error && { error: emailResult.error }),
+            ...(emailResult.debugInfo && { debugInfo: emailResult.debugInfo }),
+            recommendations: []
+        };
+        
+        // Agregar recomendaciones basadas en el resultado
+        if (!emailResult.success) {
+            response.recommendations.push('Verificar configuración EMAIL_PASSWORD en .env.production');
+            response.recommendations.push('Revisar logs del servidor para errores SMTP');
+            if (emailResult.error?.includes('authentication') || emailResult.error?.includes('login')) {
+                response.recommendations.push('Verificar credenciales de Gmail y App Password');
+            }
+        } else {
+            response.recommendations.push('Email enviado exitosamente - revisar carpeta de spam del destinatario');
+            response.recommendations.push('Para invitaciones reales, usar: POST /activities/{id}/students');
+        }
+        
+        res.status(emailResult.success ? 200 : 500).send(response);
+        
+    } catch (error: any) {
+        console.error(`❌ [Auth Debug] Error en test de email:`, error);
+        
+        res.status(500).send({
+            success: false,
+            error: error.message,
+            timestamp: new Date().toISOString(),
+            recommendations: [
+                'Verificar que el servidor de email esté configurado correctamente',
+                'Revisar variables de entorno EMAIL_USER y EMAIL_PASSWORD',
+                'Verificar conectividad a smtp.gmail.com puerto 465'
+            ]
+        });
+    }
+});
+
+export default authRouter;

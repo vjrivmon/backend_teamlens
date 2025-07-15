@@ -34,7 +34,7 @@ handleActivityStudentsRouter.get("/", async (req: Request, res: Response) => {
     }
 });
 
-handleActivityStudentsRouter.post("/", verifyTeacher, async (req: Request, res: Response) => {
+handleActivityStudentsRouter.post("/", verifyTeacher, async (req: Request, res: Response): Promise<void> => {
 
     const { activityId } = req?.params;
     console.log(`📋 [ActivityStudents] Iniciando proceso de adición de estudiantes a actividad: ${activityId}`);
@@ -72,48 +72,83 @@ handleActivityStudentsRouter.post("/", verifyTeacher, async (req: Request, res: 
                 
                 try {
                     //crear cuenta temporal
+                    console.log(`🔧 [ActivityStudents] Llamando a createNonRegisteredAccount para: ${email}`);
                     const temporalUserId = await createNonRegisteredAccount(email);
                     
                     if (temporalUserId) {
                         existingUserIds.push(temporalUserId);
                         emailSuccesses.push(email);
                         console.log(`✅ [ActivityStudents] Usuario temporal creado exitosamente: ${email} (ID: ${temporalUserId})`);
+                        console.log(`📧 [ActivityStudents] Email de invitación enviado a: ${email}`);
                     } else {
                         console.error(`❌ [ActivityStudents] No se pudo crear usuario temporal para: ${email}`);
                         emailErrors.push(`${email}: No se pudo crear cuenta temporal`);
                     }
                 } catch (error: any) {
                     console.error(`❌ [ActivityStudents] Error creando cuenta temporal para ${email}:`, error);
+                    console.error(`❌ [ActivityStudents] Stack trace:`, error.stack);
                     emailErrors.push(`${email}: ${error.message}`);
                 }
             } else {
                 console.log(`✅ [ActivityStudents] Usuario ya existe: ${email}`);
+                emailSuccesses.push(email); // Añadir a éxitos aunque ya exista
             }
         }
 
-        // Log del resumen del proceso
+        // Log del resumen del proceso con más detalle
         console.log(`📊 [ActivityStudents] Resumen del procesamiento de emails:`);
         console.log(`  - Emails procesados: ${emails.length}`);
         console.log(`  - Usuarios existentes: ${existingUserEmails.length}`);
         console.log(`  - Cuentas temporales intentadas: ${temporalUsersEmail.length}`);
         console.log(`  - Invitaciones exitosas: ${emailSuccesses.length}`);
         console.log(`  - Errores de email: ${emailErrors.length}`);
+        console.log(`  - IDs finales de usuarios: ${existingUserIds.length}`);
 
         if (emailErrors.length > 0) {
             console.error(`❌ [ActivityStudents] Errores en el envío de emails:`, emailErrors);
         }
 
         if (emailSuccesses.length > 0) {
-            console.log(`✅ [ActivityStudents] Invitaciones enviadas exitosamente a:`, emailSuccesses);
+            console.log(`✅ [ActivityStudents] Invitaciones/usuarios procesados exitosamente:`, emailSuccesses);
         }
 
         console.log(`👥 [ActivityStudents] IDs de usuarios finales a añadir:`, existingUserIds);
 
+        // Verificar que tenemos usuarios para añadir
+        if (existingUserIds.length === 0) {
+            console.warn(`⚠️ [ActivityStudents] No hay usuarios válidos para añadir a la actividad`);
+            res.status(400).send({
+                message: "No se pudieron procesar los emails proporcionados",
+                errors: emailErrors,
+                processedEmails: emails.length,
+                successfulEmails: emailSuccesses.length
+            });
+            return;
+        }
+
+        // Añadir estudiantes a la actividad
+        console.log(`🔗 [ActivityStudents] Añadiendo ${existingUserIds.length} usuarios a la actividad ${activityId}...`);
         const query = { _id: new ObjectId(activityId) };
         const result = await collections.activities?.updateOne(query, {
             $addToSet: { students: { $each: existingUserIds } }
         });
 
+        if (!result || result.matchedCount === 0) {
+            console.error(`❌ [ActivityStudents] No se pudo encontrar la actividad ${activityId}`);
+            res.status(404).send({
+                message: `Activity with id ${activityId} not found`
+            });
+            return;
+        }
+
+        console.log(`📝 [ActivityStudents] Resultado de actualización de actividad:`, {
+            matchedCount: result.matchedCount,
+            modifiedCount: result.modifiedCount,
+            upsertedCount: result.upsertedCount
+        });
+
+        // Añadir actividad a los usuarios
+        console.log(`👤 [ActivityStudents] Añadiendo actividad ${activityId} a ${existingUserIds.length} usuarios...`);
         await collections.users?.updateMany({ _id: { $in: existingUserIds } }, {
             $addToSet: { activities: new ObjectId(activityId) }
         });

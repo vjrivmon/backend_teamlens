@@ -403,7 +403,10 @@ Este es un mensaje automático de TeamLens.`
      */
     public async sendQuestionnaireReminder(email: string, questionnaireId: string): Promise<EmailResult> {
         try {
-            const questionnaireUrl = `${this.urlConfig.questionnaire}/${questionnaireId}`;
+            // Crear URL con email como parámetro para acceso anónimo directo
+            const questionnaireUrl = `${this.urlConfig.questionnaire}/${questionnaireId}?email=${encodeURIComponent(email)}`;
+            
+            console.log(`📧 [EmailService] Generando enlace con email pre-completado: ${questionnaireUrl}`);
             
             // Cargar template de recordatorio de cuestionario
             const contentTemplate = this.loadTemplate('questionnaire-reminder');
@@ -431,11 +434,13 @@ Esta evaluación es fundamental para la formación de equipos equilibrados en tu
 Duración aproximada: 10-15 minutos
 Tu participación en las actividades del curso puede depender de completar este cuestionario.
 
+IMPORTANTE: Tu email (${email}) se incluye automáticamente en el enlace para tu comodidad.
+
 Este es un mensaje automático de TeamLens.`
             };
 
             console.log(`📧 [EmailService] Enviando recordatorio de cuestionario a: ${email}`);
-            console.log(`🔗 [EmailService] URL del cuestionario: ${questionnaireUrl}`);
+            console.log(`🔗 [EmailService] URL del cuestionario con email: ${questionnaireUrl}`);
             
             return await this.sendEmail(mailDetails);
         } catch (error: any) {

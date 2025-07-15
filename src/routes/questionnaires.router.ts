@@ -119,6 +119,168 @@ questionnairesRouter.put("/:id", async (req: Request, res: Response) => {
     }
 });
 
+/**
+ * Endpoint para submit anónimo de cuestionarios (sin autenticación)
+ * Permite a estudiantes responder cuestionarios desde enlaces de correo
+ * @route PUT /questionnaires/:id/submit-anonymous
+ */
+questionnairesRouter.put("/:id/submit-anonymous", async (req: Request, res: Response) => {
+    const id = req?.params?.id;
+    const { email, ...testValues } = req.body; // Extraer email de los datos
+
+    console.log(`🎯 [QuestionnairesAnonymous] Submit anónimo iniciado para cuestionario ${id}`);
+    console.log(`📧 [QuestionnairesAnonymous] Email proporcionado: ${email}`);
+
+    try {
+        // Validar que se proporcionó un email
+        if (!email) {
+            res.status(400).send({
+                message: "Email es requerido para submits anónimos"
+            });
+            return;
+        }
+
+        // Validar formato de email
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            res.status(400).send({
+                message: "Formato de email inválido"
+            });
+            return;
+        }
+
+        // Verificar que el cuestionario existe
+        const questionnaire = await collections.questionnaires?.findOne<Questionnaire>({ _id: new ObjectId(id) });
+
+        if (!questionnaire) {
+            res.status(404).send({
+                message: `Questionnaire with id ${id} does not exist`
+            });
+            return;
+        }
+
+        // Buscar usuario por email (puede o no existir)
+        let user = await collections.users?.findOne({ email: email });
+        let userObjectId: ObjectId;
+
+        if (!user) {
+            // Crear usuario temporal para estudiantes anónimos
+            console.log(`➕ [QuestionnairesAnonymous] Creando usuario temporal para: ${email}`);
+            
+            const tempUser = {
+                email: email,
+                role: "student",
+                name: email.split('@')[0], // Usar parte del email como nombre temporal
+                lastName: "Estudiante",
+                birthDate: new Date().toISOString(),
+                traits: [],
+                activities: [],
+                askedQuestionnaires: [],
+                groups: [],
+                notifications: [],
+                invitationToken: "", // Usuario ya "registrado" vía cuestionario
+                isTemporary: true // Marcador para usuarios creados automáticamente
+            };
+
+            const result = await collections.users?.insertOne(tempUser);
+            userObjectId = result!.insertedId;
+            console.log(`✅ [QuestionnairesAnonymous] Usuario temporal creado con ID: ${userObjectId}`);
+        } else {
+            userObjectId = user._id as ObjectId;
+            console.log(`👤 [QuestionnairesAnonymous] Usuario existente encontrado: ${user.email}`);
+        }
+
+        // Procesar según tipo de cuestionario
+        if (questionnaire.questionnaireType === "BELBIN") {
+            const roles = getBelbinMainRoles(testValues);
+            const belbinResult = Object.keys(roles[0])[0];
+            const completionDate = new Date();
+
+            console.log(`🎯 [QuestionnairesAnonymous] Resultado Belbin calculado para ${email}: ${belbinResult}`);
+
+            // Verificar si ya existe una respuesta previa
+            const existingResponse = await collections.users?.findOne({
+                _id: userObjectId,
+                "askedQuestionnaires.questionnaire": new ObjectId(id)
+            });
+
+            let updateResult;
+
+            if (existingResponse) {
+                // Actualizar respuesta existente
+                console.log(`🔄 [QuestionnairesAnonymous] Actualizando respuesta existente para ${email}`);
+                updateResult = await collections.users?.updateOne(
+                    { 
+                        _id: userObjectId, 
+                        "askedQuestionnaires.questionnaire": new ObjectId(id) 
+                    },
+                    {
+                        $set: {
+                            "askedQuestionnaires.$.result": belbinResult,
+                            "askedQuestionnaires.$.completedAt": completionDate
+                        }
+                    }
+                );
+            } else {
+                // Crear nueva respuesta
+                console.log(`➕ [QuestionnairesAnonymous] Creando nueva respuesta para ${email}`);
+                updateResult = await collections.users?.updateOne(
+                    { _id: userObjectId },
+                    {
+                        $push: {
+                            askedQuestionnaires: {
+                                questionnaire: new ObjectId(id),
+                                result: belbinResult,
+                                completedAt: completionDate
+                            }
+                        }
+                    }
+                );
+            }
+
+            if (updateResult && (updateResult.modifiedCount > 0 || updateResult.matchedCount > 0)) {
+                console.log(`✅ [QuestionnairesAnonymous] Cuestionario guardado exitosamente para ${email}`);
+                
+                // Actualizar archivos de algoritmo si corresponde
+                try {
+                    await updateAlgorithmFilesForStudent(userObjectId.toString(), email);
+                    console.log(`🔥 [QuestionnairesAnonymous] Archivos de algoritmo actualizados para ${email}`);
+                } catch (algorithmError) {
+                    console.warn(`⚠️ [QuestionnairesAnonymous] Error actualizando archivos de algoritmo: ${algorithmError}`);
+                    // No fallar el submit por esto
+                }
+                
+                res.status(200).send({
+                    message: "Cuestionario completado exitosamente", 
+                    data: {
+                        questionnaire: id,
+                        result: belbinResult,
+                        userEmail: email,
+                        completedAt: completionDate.toISOString(),
+                        isNewUser: !user
+                    }
+                });
+            } else {
+                console.error(`❌ [QuestionnairesAnonymous] Error guardando cuestionario para ${email}`);
+                res.status(400).send({
+                    message: `Failed to save questionnaire with id ${id}`
+                });
+            }
+        } else {
+            // Para otros tipos de cuestionarios (implementar según necesidad)
+            res.status(400).send({
+                message: `Questionnaire type ${questionnaire.questionnaireType} not supported for anonymous submission`
+            });
+        }
+
+    } catch (error: any) {
+        console.error(`❌ [QuestionnairesAnonymous] Error en submit anónimo:`, error.message);
+        res.status(500).send({
+            message: error.message
+        });
+    }
+});
+
 questionnairesRouter.put("/:id/submit", async (req: Request, res: Response) => {
     const id = req?.params?.id;
     const authUserId = req.session?.authuser as string;

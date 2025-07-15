@@ -30,11 +30,20 @@ import {
 
 export const activitiesRouter = express.Router();
 
+// Logging middleware para todas las rutas de activities
+activitiesRouter.use((req, res, next) => {
+    console.log(`🎯 [Activities] ${req.method} ${req.path} - IP: ${req.ip}`);
+    next();
+});
+
 activitiesRouter.get("/", async (_req: Request, res: Response) => {
     try {
+        console.log(`📋 [Activities] Obteniendo lista de actividades`);
         const activities = await collections.activities?.find<Activity[]>({}).toArray();
+        console.log(`✅ [Activities] Encontradas ${activities?.length || 0} actividades`);
         res.status(200).send(activities);
     } catch (error: any) {
+        console.error(`❌ [Activities] Error obteniendo actividades:`, error);
         res.status(500).send({
             message: error.message
         });
@@ -44,18 +53,25 @@ activitiesRouter.get("/", async (_req: Request, res: Response) => {
 activitiesRouter.get("/:id", async (req: Request, res: Response) => {
 
     const id = req?.params?.id;
+    console.log(`🔍 [Activities] Obteniendo actividad con ID: ${id}`);
 
     try {
         const query = { _id: new ObjectId(id) };
+        console.log(`🔍 [Activities] Query MongoDB: ${JSON.stringify(query)}`);
         const activity = await collections.activities?.findOne<Activity>(query);
 
-        !activity
-            ? res.status(404).send({
+        if (!activity) {
+            console.log(`❌ [Activities] Actividad no encontrada con ID: ${id}`);
+            res.status(404).send({
                 message: `Unable to find matching document with id: ${id}`
-            })
-            : res.status(200).send(activity);
+            });
+        } else {
+            console.log(`✅ [Activities] Actividad encontrada: ${activity.name}`);
+            res.status(200).send(activity);
+        }
 
     } catch (error) {
+        console.error(`❌ [Activities] Error obteniendo actividad ${id}:`, error);
         res.status(404).send({
             message: `Unable to find matching document with id: ${id}`
         });

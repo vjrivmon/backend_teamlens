@@ -62,6 +62,17 @@ connectToDatabase()
         // Router sin autenticación para debug (SOLO DESARROLLO)
         app.use("/debug", debugRouter);
         
+        // Health check endpoint (sin autenticación)
+        app.get("/health", (req, res) => {
+            res.status(200).json({
+                status: "OK",
+                timestamp: new Date().toISOString(),
+                environment: process.env.NODE_ENV,
+                uptime: process.uptime(),
+                spa_fallback: shouldEnableSPA
+            });
+        });
+        
         // Routers con autenticación
         app.use("/users", verifyToken, usersRouter);
         app.use("/activities", verifyToken, activitiesRouter);
@@ -72,8 +83,10 @@ connectToDatabase()
         // CONFIGURACIÓN EMPRESARIAL PARA SPA (SINGLE PAGE APPLICATION)
         // ============================================================================
         
-        // 🚀 ACTIVAR SPA FALLBACK SIEMPRE (solución al problema de pantalla negra)
-        const shouldEnableSPA = true; // Anteriormente: process.env.NODE_ENV === 'production'
+        // 🚀 ACTIVAR SPA FALLBACK SOLO CUANDO NO HAY NGINX (solución al problema de pantalla negra)
+        const shouldEnableSPA = process.env.NODE_ENV !== 'production';
+        
+        console.log(`🔧 [SPA] Configuración: NODE_ENV=${process.env.NODE_ENV}, shouldEnableSPA=${shouldEnableSPA}`); // Anteriormente: process.env.NODE_ENV === 'production'
         
         if (shouldEnableSPA) {
             // 📁 Servir archivos estáticos de Angular

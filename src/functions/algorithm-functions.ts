@@ -56,7 +56,58 @@ export const getAlgorithmFilePath = (activityId: string): string => {
 };
 
 /**
+ * Verifica si al menos algunos estudiantes de una actividad han completado el test BELBIN
+ * MODIFICADO: Ya no requiere que TODOS hayan completado, solo que haya al menos algunos
+ * @param activityId ID de la actividad
+ * @returns Promise<boolean> true si al menos algunos han completado BELBIN
+ */
+export const validateMinimumStudentsWithBelbin = async (activityId: string): Promise<boolean> => {
+    console.log(`🔍 [AlgorithmFunctions] Validando que haya estudiantes con BELBIN para actividad: ${activityId}`);
+
+    try {
+        // Obtener la actividad y sus estudiantes
+        const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
+        
+        if (!activity || !activity.students || activity.students.length === 0) {
+            console.log(`⚠️ [AlgorithmFunctions] Actividad sin estudiantes: ${activityId}`);
+            return false;
+        }
+
+        console.log(`👥 [AlgorithmFunctions] Validando ${activity.students.length} estudiantes...`);
+
+        // Verificar que al menos algunos estudiantes han completado BELBIN
+        const studentsWithBelbin = await collections.users?.find({
+            _id: { $in: activity.students },
+            "askedQuestionnaires.questionnaire": { $exists: true },
+            "askedQuestionnaires": {
+                $elemMatch: {
+                    "result": { $in: BELBIN_TRAITS }
+                }
+            }
+        }).toArray();
+
+        const completedCount = studentsWithBelbin?.length || 0;
+        const totalCount = activity.students.length;
+        
+        console.log(`📊 [AlgorithmFunctions] BELBIN completado: ${completedCount}/${totalCount}`);
+
+        if (completedCount > 0) {
+            console.log(`✅ [AlgorithmFunctions] ${completedCount} estudiantes han completado BELBIN - algoritmo puede proceder`);
+            return true;
+        } else {
+            console.log(`❌ [AlgorithmFunctions] Ningún estudiante ha completado BELBIN`);
+            return false;
+        }
+
+    } catch (error: any) {
+        console.error(`💥 [AlgorithmFunctions] Error validando BELBIN:`, error);
+        return false;
+    }
+};
+
+/**
  * Verifica si todos los estudiantes de una actividad han completado el test BELBIN
+ * MANTENIDA: Para retrocompatibilidad con otras funciones
  * @param activityId ID de la actividad
  * @returns Promise<boolean> true si todos han completado BELBIN
  */
@@ -105,13 +156,13 @@ export const validateAllStudentsCompletedBelbin = async (activityId: string): Pr
 };
 
 /**
- * Obtiene los miembros de una actividad con sus traits BELBIN
- * CORREGIDO: Retorna solo traits sin IDs como espera el algoritmo Python
+ * Obtiene TODOS los miembros de una actividad con sus traits BELBIN
+ * MODIFICADO: Incluye TODOS los estudiantes, con traits vacíos para los que no han completado BELBIN
  * @param activityId ID de la actividad
- * @returns Promise<AlgorithmMember[]> Array de miembros con traits
+ * @returns Promise<AlgorithmMember[]> Array de miembros con traits (puede incluir traits vacíos)
  */
 export const getActivityMembersWithTraits = async (activityId: string): Promise<AlgorithmMember[]> => {
-    console.log(`👥 [AlgorithmFunctions] Obteniendo miembros con traits para actividad: ${activityId}`);
+    console.log(`👥 [AlgorithmFunctions] Obteniendo TODOS los miembros con traits para actividad: ${activityId}`);
 
     try {
         const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
@@ -121,22 +172,20 @@ export const getActivityMembersWithTraits = async (activityId: string): Promise<
             return [];
         }
 
-        // Obtener estudiantes con sus cuestionarios completados
-        const studentsWithBelbin = await collections.users?.find({
-            _id: { $in: activity.students },
-            "askedQuestionnaires": {
-                $elemMatch: {
-                    "result": { $in: BELBIN_TRAITS }
-                }
-            }
+        // Obtener TODOS los estudiantes de la actividad
+        const allStudents = await collections.users?.find({
+            _id: { $in: activity.students }
         }).toArray();
 
-        if (!studentsWithBelbin) {
-            console.log(`⚠️ [AlgorithmFunctions] No hay estudiantes con BELBIN completado`);
+        if (!allStudents || allStudents.length === 0) {
+            console.log(`⚠️ [AlgorithmFunctions] No se encontraron estudiantes en la actividad`);
             return [];
         }
 
-        const members: AlgorithmMember[] = studentsWithBelbin.map(student => {
+        let studentsWithBelbin = 0;
+        let studentsWithoutBelbin = 0;
+
+        const members: AlgorithmMember[] = allStudents.map(student => {
             // Buscar el resultado BELBIN del estudiante
             const belbinQuestionnaire = student.askedQuestionnaires?.find(aq => 
                 BELBIN_TRAITS.includes(aq.result)
@@ -144,17 +193,27 @@ export const getActivityMembersWithTraits = async (activityId: string): Promise<
 
             const primaryTrait = belbinQuestionnaire?.result || "";
             
-            // CORREGIDO: Solo retornar traits, sin ID
+            // Si tiene BELBIN, usar el trait; si no, array vacío
             const traits = primaryTrait ? [primaryTrait] : [];
 
-            console.log(`📝 [AlgorithmFunctions] Estudiante ${student.email}: ${traits.join(', ')}`);
+            if (traits.length > 0) {
+                studentsWithBelbin++;
+                console.log(`📝 [AlgorithmFunctions] Estudiante ${student.email}: ${traits.join(', ')}`);
+            } else {
+                studentsWithoutBelbin++;
+                console.log(`📝 [AlgorithmFunctions] Estudiante ${student.email}: sin BELBIN - traits vacíos`);
+            }
 
             return {
                 traits: traits  // SIN id - solo traits como en la plantilla
             };
         });
 
-        console.log(`✅ [AlgorithmFunctions] ${members.length} miembros procesados con traits`);
+        console.log(`✅ [AlgorithmFunctions] ${members.length} miembros procesados:`);
+        console.log(`   📊 Con BELBIN: ${studentsWithBelbin}`);
+        console.log(`   📊 Sin BELBIN: ${studentsWithoutBelbin}`);
+        console.log(`   📊 El algoritmo puede proceder con estudiantes con traits vacíos`);
+        
         return members;
 
     } catch (error: any) {
@@ -227,14 +286,14 @@ export const generateAlgorithmJSON = async (
     console.log(`📏 [AlgorithmFunctions] Parámetros del profesor: tamaño=${teamSize}, min=${minTeams}, max=${maxTeams}`);
 
     try {
-        // Validar que todos han completado BELBIN
-        const allCompleted = await validateAllStudentsCompletedBelbin(activityId);
-        if (!allCompleted) {
-            console.error(`❌ [AlgorithmFunctions] No todos los estudiantes han completado BELBIN`);
+        // Validar que al menos algunos estudiantes han completado BELBIN
+        const hasMinimumBelbin = await validateMinimumStudentsWithBelbin(activityId);
+        if (!hasMinimumBelbin) {
+            console.error(`❌ [AlgorithmFunctions] No hay estudiantes con BELBIN completado - algoritmo requiere al menos algunos`);
             return null;
         }
 
-        // Obtener miembros con traits (sin IDs)
+        // Obtener TODOS los miembros con traits (incluye estudiantes sin BELBIN con traits vacíos)
         const members = await getActivityMembersWithTraits(activityId);
         if (members.length === 0) {
             console.error(`❌ [AlgorithmFunctions] No hay miembros válidos para el algoritmo`);
@@ -410,11 +469,11 @@ export const regenerateAlgorithmFileOnConfigChange = async (
     console.log(`📋 [AlgorithmRegenerate] Nueva configuración del profesor:`, newConfig);
 
     try {
-        // Verificar si todos los estudiantes han completado BELBIN
-        const allCompleted = await validateAllStudentsCompletedBelbin(activityId);
+        // Verificar si al menos algunos estudiantes han completado BELBIN
+        const hasMinimumBelbin = await validateMinimumStudentsWithBelbin(activityId);
         
-        if (!allCompleted) {
-            console.log(`⏳ [AlgorithmRegenerate] No todos los estudiantes han completado BELBIN - No se regenera archivo`);
+        if (!hasMinimumBelbin) {
+            console.log(`⏳ [AlgorithmRegenerate] No hay estudiantes con BELBIN completado - No se regenera archivo`);
             return false;
         }
 
@@ -657,11 +716,11 @@ export const handleActivityChange = async (
             case 'student-belbin':
                 console.log(`👨‍🎓 [ActivityChangeListener] Estudiante completó BELBIN - Verificando si regenerar archivo...`);
                 
-                // Verificar si ahora todos han completado BELBIN
-                const allCompleted = await validateAllStudentsCompletedBelbin(activityId);
+                // Verificar si hay suficientes estudiantes con BELBIN para regenerar
+                const hasMinimumBelbin = await validateMinimumStudentsWithBelbin(activityId);
                 
-                if (allCompleted) {
-                    console.log(`✅ [ActivityChangeListener] Todos completaron BELBIN - Regenerando archivo`);
+                if (hasMinimumBelbin) {
+                    console.log(`✅ [ActivityChangeListener] Suficientes estudiantes con BELBIN - Regenerando archivo`);
                     await regenerateAlgorithmFileOnConfigChange(activityId, algorithmConfig);
                     
                     // Actualizar estado de la actividad a 'ready'
@@ -689,9 +748,9 @@ export const handleActivityChange = async (
                 
                 // Si el archivo existe, puede necesitar regeneración con los nuevos estudiantes
                 if (algorithmFileExists(activityId)) {
-                    const stillAllCompleted = await validateAllStudentsCompletedBelbin(activityId);
+                    const hasMinimumBelbin = await validateMinimumStudentsWithBelbin(activityId);
                     
-                    if (stillAllCompleted) {
+                    if (hasMinimumBelbin) {
                         console.log(`🔄 [ActivityChangeListener] Regenerando archivo con nuevo estudiante`);
                         await regenerateAlgorithmFileOnConfigChange(activityId, algorithmConfig);
                     } else {

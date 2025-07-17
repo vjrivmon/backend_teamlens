@@ -595,77 +595,62 @@ activitiesRouter.post("/:id/algorithm/execute", verifyTeacher, async (req: Reque
             }
         });
         
-        // Ahora hacer la consulta original
-        const studentsWithBelbin = await collections.users?.find({
-            _id: { $in: selectedStudentObjectIds },
-            "askedQuestionnaires": {
-                $elemMatch: {
-                    "result": { $in: ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI"] }
-                }
-            }
-        }).toArray();
-
-        console.log(`📊 [AlgorithmExecute] DEBUG - Estudiantes con BELBIN encontrados: ${studentsWithBelbin?.length || 0}`);
+        // MODIFICADO: Obtener TODOS los estudiantes seleccionados, no solo los que tienen BELBIN
+        console.log(`📊 [AlgorithmExecute] TODOS los estudiantes seleccionados: ${allSelectedStudents?.length || 0}`);
         
-        if (!studentsWithBelbin || studentsWithBelbin.length === 0) {
-            console.log(`❌ [AlgorithmExecute] No se encontraron estudiantes seleccionados con BELBIN`);
+        // Verificar que al menos algunos estudiantes tienen BELBIN
+        const studentsWithBelbin = allSelectedStudents?.filter(student => 
+            student.askedQuestionnaires?.some(aq => 
+                ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI", "IM", "CO"].includes(aq.result)
+            )
+        ) || [];
+
+        console.log(`📊 [AlgorithmExecute] Estudiantes con BELBIN: ${studentsWithBelbin.length}/${allSelectedStudents?.length || 0}`);
+        
+        if (studentsWithBelbin.length === 0) {
+            console.log(`❌ [AlgorithmExecute] Ningún estudiante seleccionado tiene BELBIN completado`);
             return res.status(400).send({
-                message: "No selected students found or students don't have BELBIN results"
+                message: "No selected students have BELBIN results - algorithm requires at least some students with BELBIN"
             });
         }
 
-        // Crear mapeo de índices para constraints
+        // Crear mapeo de índices para constraints y procesar TODOS los estudiantes
         const studentIdToIndex = new Map();
-        const membersWithTraits = studentsWithBelbin.map((student, index) => {
+        let studentsWithBelbinCount = 0;
+        let studentsWithoutBelbinCount = 0;
+
+        const membersWithTraits = allSelectedStudents?.map((student, index) => {
             studentIdToIndex.set(student._id.toString(), index);
             
             const belbinResult = student.askedQuestionnaires?.find(
                 aq => ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI", "IM", "CO"].includes(aq.result)
             );
             
-            // CORREGIDO: Mapear códigos BELBIN correctamente
-            let mappedResult = belbinResult?.result || "SH";
-            if (mappedResult === "IM") mappedResult = "CW";  // Implementador → Coordinador de Trabajo
-            if (mappedResult === "CO") mappedResult = "CH";  // Coordinator → Coordinador
+            let traits: string[] = [];
             
-            const traits = [mappedResult];
+            if (belbinResult) {
+                // CORREGIDO: Mapear códigos BELBIN correctamente
+                let mappedResult = belbinResult.result;
+                if (mappedResult === "IM") mappedResult = "CW";  // Implementador → Coordinador de Trabajo
+                if (mappedResult === "CO") mappedResult = "CH";  // Coordinator → Coordinador
+                
+                traits = [mappedResult];
+                studentsWithBelbinCount++;
+                console.log(`📝 [AlgorithmExecute] Estudiante ${student.email}: traits=${traits.join(', ')}`);
+            } else {
+                // Estudiante sin BELBIN - traits vacío
+                traits = [];
+                studentsWithoutBelbinCount++;
+                console.log(`📝 [AlgorithmExecute] Estudiante ${student.email}: sin BELBIN - traits vacíos`);
+            }
             
-            console.log(`📝 [AlgorithmExecute] Estudiante ${student.email}: traits=${traits.join(', ')}`);
             return { traits };
-        });
+        }) || [];
 
-        // Verificar que todos los estudiantes seleccionados tienen BELBIN
-        const studentsWithoutBelbin = selectedStudentIds.filter((id: string) => 
-            !studentsWithBelbin.some(s => s._id.toString() === id)
-        );
-
-        if (studentsWithoutBelbin.length > 0) {
-            console.log(`❌ [AlgorithmExecute] ${studentsWithoutBelbin.length} estudiantes seleccionados no tienen BELBIN`);
-            console.log(`🔍 [AlgorithmExecute] DEBUG - IDs sin BELBIN detectados:`);
-            
-            // Mostrar detalles de los estudiantes que fallan la validación
-            studentsWithoutBelbin.forEach((missingId: string, index: number) => {
-                const studentData = allSelectedStudents?.find(s => s._id.toString() === missingId);
-                console.log(`   ${index + 1}. ID: ${missingId}`);
-                console.log(`      Email: ${studentData?.email || 'NO ENCONTRADO'}`);
-                console.log(`      askedQuestionnaires: ${JSON.stringify(studentData?.askedQuestionnaires || [])}`);
-            });
-            
-            return res.status(400).send({
-                message: `${studentsWithoutBelbin.length} selected students don't have BELBIN results`,
-                studentsWithoutBelbin: studentsWithoutBelbin,
-                debugInfo: studentsWithoutBelbin.map((id: string) => {
-                    const studentData = allSelectedStudents?.find(s => s._id.toString() === id);
-                    return {
-                        id: id,
-                        email: studentData?.email,
-                        askedQuestionnaires: studentData?.askedQuestionnaires || []
-                    };
-                })
-            });
-        }
-
-        console.log(`✅ [AlgorithmExecute] ${membersWithTraits.length} estudiantes con BELBIN obtenidos correctamente`);
+        console.log(`✅ [AlgorithmExecute] ${membersWithTraits.length} estudiantes procesados:`);
+        console.log(`   📊 Con BELBIN: ${studentsWithBelbinCount}`);
+        console.log(`   📊 Sin BELBIN: ${studentsWithoutBelbinCount}`);
+        console.log(`   📊 El algoritmo puede proceder con estudiantes con traits vacíos`);
 
         // Paso 4: Construir datos del algoritmo con traits reales
         console.log(`🔍 [AlgorithmExecute] Paso 4: Construyendo datos del algoritmo con traits reales...`);

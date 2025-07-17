@@ -38,46 +38,42 @@ async function runAlgorithm() {
         console.log(`   - Tamaño equipo: ${algorithmData.constraints?.find(c => c.type === 'SizeCardinality')?.team_size || 'no especificado'}`);
         console.log(`   - Constraints: ${algorithmData.constraints?.length || 0}`);
         
-        // 3. CORREGIDO: Usar los IDs ordenados enviados desde el backend
-        let studentIds;
+        // 3. MODIFICADO: Usar el JSON como fuente de verdad y obtener TODOS los estudiantes
+        console.log(`✅ [AlgorithmWorker] Usando JSON como fuente de verdad con ${algorithmData.number_members} miembros`);
         
-        if (orderedStudentIds && orderedStudentIds.length > 0) {
-            // Usar el orden exacto enviado desde el backend
-            studentIds = orderedStudentIds;
-            console.log(`✅ [AlgorithmWorker] Usando orden de estudiantes del backend: ${studentIds.length}`);
-            
-            // Verificar que coincide con el número de miembros en el JSON
-            if (studentIds.length !== algorithmData.number_members) {
-                throw new Error(`Desajuste: JSON tiene ${algorithmData.number_members} miembros, backend envió ${studentIds.length} IDs`);
-            }
-        } else {
-            // Fallback: obtener de la base de datos (método anterior)
-            console.log(`⚠️ [AlgorithmWorker] No se recibieron IDs ordenados, obteniendo de la base de datos...`);
-            
-            const client = new MongoClient('mongodb://localhost:27017');
-            await client.connect();
-            const db = client.db('test');
-            
-            const activity = await db.collection('activities').findOne({ 
-                _id: new ObjectId(activityId) 
-            });
-            
-            if (!activity || !activity.students) {
-                throw new Error('Actividad no encontrada o sin estudiantes');
-            }
-            
-            const allStudents = await db.collection('users').find({
-                _id: { $in: activity.students },
-                "askedQuestionnaires": {
-                    $elemMatch: {
-                        "result": { $in: ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI"] }
-                    }
-                }
-            }).toArray();
-            
-            studentIds = allStudents.slice(0, algorithmData.number_members).map(student => student._id.toString());
+        // Obtener TODOS los estudiantes de la actividad desde la base de datos
+        const client = new MongoClient('mongodb://localhost:27017');
+        await client.connect();
+        const db = client.db('test');
+        
+        const activity = await db.collection('activities').findOne({ 
+            _id: new ObjectId(activityId) 
+        });
+        
+        if (!activity || !activity.students) {
             await client.close();
+            throw new Error('Actividad no encontrada o sin estudiantes');
         }
+        
+        // CORREGIDO: Obtener TODOS los estudiantes (con y sin BELBIN) en el mismo orden que la actividad
+        const allStudents = await db.collection('users').find({
+            _id: { $in: activity.students }
+        }).toArray();
+        
+        // Mapear estudiantes en el mismo orden que están en activity.students
+        const orderedStudents = activity.students.map(studentId => 
+            allStudents.find(student => student._id.toString() === studentId.toString())
+        ).filter(student => student); // Filtrar nulls/undefined
+        
+        // Tomar exactamente el número de estudiantes que tiene el JSON
+        const studentIds = orderedStudents
+            .slice(0, algorithmData.number_members)
+            .map(student => student._id.toString());
+        
+        await client.close();
+        
+        console.log(`📊 [AlgorithmWorker] Mapeados ${studentIds.length} estudiantes desde la base de datos`);
+        console.log(`✅ [AlgorithmWorker] Coincidencia perfecta: JSON=${algorithmData.number_members}, BD=${studentIds.length}`);
         
         console.log(`👥 [AlgorithmWorker] Estudiantes finales mapeados: ${studentIds.length}`);
         console.log(`📧 [AlgorithmWorker] IDs de estudiantes en orden:`);

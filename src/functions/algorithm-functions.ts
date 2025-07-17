@@ -5,10 +5,12 @@ import * as path from 'path';
 
 /**
  * Interfaz para definir la estructura del archivo JSON del algoritmo
- * CORREGIDA para coincidir con la plantilla esperada por Python
+ * ACTUALIZADA: Incluye IDs para correlación perfecta con worker
  */
 interface AlgorithmMember {
-    traits: string[];  // SIN id - solo traits
+    id: string;        // ID del estudiante para correlación perfecta
+    email: string;     // Email para debugging y logs  
+    traits: string[];  // BELBIN traits o array vacío para estudiantes sin BELBIN
 }
 
 interface AlgorithmConstraint {
@@ -156,10 +158,11 @@ export const validateAllStudentsCompletedBelbin = async (activityId: string): Pr
 };
 
 /**
- * Obtiene TODOS los miembros de una actividad con sus traits BELBIN
- * MODIFICADO: Incluye TODOS los estudiantes, con traits vacíos para los que no han completado BELBIN
+ * MODIFICADO: Obtiene TODOS los miembros de una actividad con sus traits BELBIN
+ * Incluye estudiantes SIN BELBIN con traits vacíos []
+ * AHORA INCLUYE IDs para correlación perfecta con worker
  * @param activityId ID de la actividad
- * @returns Promise<AlgorithmMember[]> Array de miembros con traits (puede incluir traits vacíos)
+ * @returns Promise<AlgorithmMember[]> lista con todos los miembros y sus traits + IDs
  */
 export const getActivityMembersWithTraits = async (activityId: string): Promise<AlgorithmMember[]> => {
     console.log(`👥 [AlgorithmFunctions] Obteniendo TODOS los miembros con traits para actividad: ${activityId}`);
@@ -205,7 +208,9 @@ export const getActivityMembersWithTraits = async (activityId: string): Promise<
             }
 
             return {
-                traits: traits  // SIN id - solo traits como en la plantilla
+                id: student._id.toString(),  // NUEVO: Incluir ID para correlación perfecta
+                email: student.email,        // NUEVO: Para debugging y logs
+                traits: traits               // BELBIN traits o array vacío
             };
         });
 

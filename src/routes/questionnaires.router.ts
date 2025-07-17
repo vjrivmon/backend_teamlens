@@ -255,6 +255,7 @@ questionnairesRouter.put("/:id/submit-anonymous", async (req: Request, res: Resp
                     data: {
                         questionnaire: id,
                         result: belbinResult,
+                        allRoles: roles,  // Todos los roles con sus puntuaciones
                         userEmail: email,
                         completedAt: completionDate.toISOString(),
                         isNewUser: !user
@@ -377,6 +378,7 @@ questionnairesRouter.put("/:id/submit", async (req: Request, res: Response) => {
                     data: {
                         questionnaire: id,
                         result: belbinResult,
+                        allRoles: roles,  // Todos los roles con sus puntuaciones
                         userEmail: user?.email,
                         completedAt: completionDate.toISOString()
                     }

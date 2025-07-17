@@ -237,8 +237,7 @@ class EmailService {
                     from: mailDetails.from
                 });
 
-                // 🚫 TEMPORALMENTE DESHABILITADO PARA DEBUG: Simular envío exitoso en desarrollo si hay errores de autenticación
-                /*
+                // Simular envío exitoso en desarrollo si hay errores de autenticación
                 if (error.code === 'EAUTH' || (error.response && error.response.includes('Invalid login'))) {
                     console.log('🧪 [EmailService] Modo desarrollo: Simulando envío exitoso');
                     console.log('📧 [EmailService] Contenido que se habría enviado:');
@@ -252,10 +251,6 @@ class EmailService {
                         debugInfo: { simulated: true, originalError: error.message }
                     };
                 }
-                */
-                
-                // 🔧 DEBUGGING: Forzar que se muestre el error real para diagnóstico
-                console.log('🚨 [EmailService] MODO DEBUG: Mostrando error real (simulación deshabilitada)');
             }
 
             return {

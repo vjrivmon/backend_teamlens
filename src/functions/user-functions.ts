@@ -70,29 +70,34 @@ export const createNonRegisteredAccount = async (email: string): Promise<ObjectI
 
         // Enviar email de invitación usando el nuevo método mejorado
         console.log(`📧 [UserFunctions] Enviando email de invitación...`);
-        const emailResult = await emailService.sendStudentInvitation(email, invitationToken);
-
-        if (emailResult.success) {
-            console.log(`✅ [UserFunctions] Email de invitación enviado exitosamente a: ${email}`);
-            console.log(`📧 [UserFunctions] Message ID: ${emailResult.messageId}`);
+        
+        try {
+            const emailResult = await emailService.sendStudentInvitation(email, invitationToken);
             
-            // Log adicional en desarrollo
-            if (process.env.NODE_ENV !== 'production' && emailResult.debugInfo) {
-                console.log(`🔍 [UserFunctions] Debug info del email:`, emailResult.debugInfo);
-            }
-        } else {
-            console.error(`❌ [UserFunctions] Error enviando email de invitación a: ${email}`);
-            console.error(`❌ [UserFunctions] Error: ${emailResult.error}`);
-            
-            // En desarrollo, el email podría estar simulado
-            if (emailResult.debugInfo && (emailResult.debugInfo as any).simulated) {
-                console.log(`🧪 [UserFunctions] Email simulado en desarrollo - cuenta creada exitosamente`);
+            if (emailResult.success) {
+                console.log(`✅ [UserFunctions] Email de invitación enviado exitosamente a: ${email}`);
+                console.log(`📧 [UserFunctions] Message ID: ${emailResult.messageId}`);
+                
+                // Log adicional en desarrollo
+                if (process.env.NODE_ENV !== 'production' && emailResult.debugInfo) {
+                    console.log(`🔍 [UserFunctions] Debug info del email:`, emailResult.debugInfo);
+                }
             } else {
-                // En producción, si el email falla, eliminar el usuario temporal
-                console.log(`🗑️  [UserFunctions] Eliminando usuario temporal debido a fallo de email...`);
+                // Si el envío falla, eliminar el usuario temporal y lanzar error
+                console.error(`❌ [UserFunctions] Error enviando email de invitación a: ${email}`);
+                console.error(`❌ [UserFunctions] Error: ${emailResult.error}`);
+                
+                console.log(`🗑️ [UserFunctions] Eliminando usuario temporal debido a fallo de email...`);
                 await collections.users?.deleteOne({ _id: result.insertedId });
                 throw new Error(`Error enviando email de invitación: ${emailResult.error}`);
             }
+        } catch (emailError: any) {
+            // Si hay cualquier error con el email, limpiar y fallar
+            console.error(`❌ [UserFunctions] Excepción enviando email a: ${email}`, emailError);
+            
+            console.log(`🗑️ [UserFunctions] Eliminando usuario temporal debido a excepción de email...`);
+            await collections.users?.deleteOne({ _id: result.insertedId });
+            throw new Error(`Error crítico enviando email de invitación: ${emailError.message}`);
         }
 
         console.log(`🎉 [UserFunctions] Proceso de invitación completado exitosamente para: ${email}`);

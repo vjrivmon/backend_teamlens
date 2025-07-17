@@ -38,25 +38,38 @@ async function runAlgorithm() {
         console.log(`   - Tamaño equipo: ${algorithmData.constraints?.find(c => c.type === 'SizeCardinality')?.team_size || 'no especificado'}`);
         console.log(`   - Constraints: ${algorithmData.constraints?.length || 0}`);
         
-        // 3. CORREGIDO: Usar IDs directamente del JSON del algoritmo (correlación perfecta)
+        // 3. CORREGIDO: Obtener IDs reales directamente de la actividad (fuente de verdad)
         console.log(`✅ [AlgorithmWorker] Usando JSON como fuente de verdad con ${algorithmData.number_members} miembros`);
         
-        // NUEVO: Extraer IDs directamente del JSON del algoritmo
-        const studentIds = algorithmData.members.map(member => member.id);
+        // NUEVO: Obtener TODOS los estudiantes de la actividad desde la base de datos
+        const client = new MongoClient('mongodb://localhost:27017');
+        await client.connect();
+        const db = client.db('test');
         
-        console.log(`📋 [AlgorithmWorker] IDs extraídos del JSON: ${studentIds.length}`);
+        const activity = await db.collection('activities').findOne({ 
+            _id: new ObjectId(activityId) 
+        });
+        
+        if (!activity || !activity.students) {
+            await client.close();
+            throw new Error('Actividad no encontrada o sin estudiantes');
+        }
+        
+        // CRÍTICO: Usar los IDs reales de la actividad
+        const studentIds = activity.students.map(id => id.toString());
+        
+        await client.close();
+        
+        console.log(`📋 [AlgorithmWorker] IDs reales extraídos de la actividad: ${studentIds.length}`);
         studentIds.forEach((id, index) => {
-            const email = algorithmData.members[index].email;
-            const traits = algorithmData.members[index].traits;
+            const email = algorithmData.members[index]?.email || 'unknown';
+            const traits = algorithmData.members[index]?.traits || [];
             console.log(`   ${index + 1}. ${email} (${id}): ${traits.length > 0 ? traits.join(', ') : 'Sin BELBIN'}`);
         });
 
-        // ELIMINADO: Ya no necesitamos conectar a MongoDB para obtener IDs
-        // porque los IDs vienen directamente del JSON del algoritmo
-        
-        // Validar que tenemos la cantidad correcta de IDs
+        // Validar correlación perfecta
         if (studentIds.length !== algorithmData.number_members) {
-            throw new Error(`Inconsistencia interna: JSON tiene ${algorithmData.number_members} miembros, pero solo ${studentIds.length} IDs extraídos`);
+            throw new Error(`Inconsistencia crítica: Actividad tiene ${studentIds.length} estudiantes, JSON tiene ${algorithmData.number_members} miembros`);
         }
 
         // Crear array de traits simplificado para el algoritmo Python (solo traits, sin IDs)
@@ -118,7 +131,7 @@ async function runAlgorithm() {
             throw new Error(`Script Python no encontrado: ${pythonScript}`);
         }
         
-        const pythonProcess = spawn('python', [pythonScript, JSON.stringify(pythonAlgorithmData)]);
+        const pythonProcess = spawn('python3', [pythonScript, JSON.stringify(pythonAlgorithmData)]);
         
         let stdout = '';
         let stderr = '';

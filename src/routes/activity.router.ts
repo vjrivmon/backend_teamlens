@@ -598,7 +598,7 @@ activitiesRouter.post("/:id/algorithm/execute", verifyTeacher, async (req: Reque
         // MODIFICADO: Obtener TODOS los estudiantes seleccionados, no solo los que tienen BELBIN
         console.log(`📊 [AlgorithmExecute] TODOS los estudiantes seleccionados: ${allSelectedStudents?.length || 0}`);
         
-        // Verificar que al menos algunos estudiantes tienen BELBIN
+        // Verificar cuántos estudiantes tienen BELBIN (ya no es obligatorio)
         const studentsWithBelbin = allSelectedStudents?.filter(student => 
             student.askedQuestionnaires?.some(aq => 
                 ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI", "IM", "CO"].includes(aq.result)
@@ -608,16 +608,18 @@ activitiesRouter.post("/:id/algorithm/execute", verifyTeacher, async (req: Reque
         console.log(`📊 [AlgorithmExecute] Estudiantes con BELBIN: ${studentsWithBelbin.length}/${allSelectedStudents?.length || 0}`);
         
         if (studentsWithBelbin.length === 0) {
-            console.log(`❌ [AlgorithmExecute] Ningún estudiante seleccionado tiene BELBIN completado`);
-            return res.status(400).send({
-                message: "No selected students have BELBIN results - algorithm requires at least some students with BELBIN"
-            });
+            console.log(`⚠️ [AlgorithmExecute] Ningún estudiante tiene BELBIN - usando algoritmo básico de distribución aleatoria`);
+        } else {
+            console.log(`✅ [AlgorithmExecute] ${studentsWithBelbin.length} estudiantes con BELBIN - usando algoritmo avanzado`);
         }
 
         // Crear mapeo de índices para constraints y procesar TODOS los estudiantes
         const studentIdToIndex = new Map();
         let studentsWithBelbinCount = 0;
         let studentsWithoutBelbinCount = 0;
+
+        // NUEVO: Traits por defecto para estudiantes sin BELBIN (distribución balanceada)
+        const DEFAULT_BELBIN_TRAITS = ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI"];
 
         const membersWithTraits = allSelectedStudents?.map((student, index) => {
             studentIdToIndex.set(student._id.toString(), index);
@@ -638,19 +640,20 @@ activitiesRouter.post("/:id/algorithm/execute", verifyTeacher, async (req: Reque
                 studentsWithBelbinCount++;
                 console.log(`📝 [AlgorithmExecute] Estudiante ${student.email}: traits=${traits.join(', ')}`);
             } else {
-                // Estudiante sin BELBIN - traits vacío
-                traits = [];
+                // NUEVO: Asignar trait por defecto basado en distribución cíclica para balance
+                const defaultTrait = DEFAULT_BELBIN_TRAITS[index % DEFAULT_BELBIN_TRAITS.length];
+                traits = [defaultTrait];
                 studentsWithoutBelbinCount++;
-                console.log(`📝 [AlgorithmExecute] Estudiante ${student.email}: sin BELBIN - traits vacíos`);
+                console.log(`📝 [AlgorithmExecute] Estudiante ${student.email}: sin BELBIN - asignado trait por defecto: ${defaultTrait}`);
             }
             
             return { traits };
         }) || [];
 
         console.log(`✅ [AlgorithmExecute] ${membersWithTraits.length} estudiantes procesados:`);
-        console.log(`   📊 Con BELBIN: ${studentsWithBelbinCount}`);
-        console.log(`   📊 Sin BELBIN: ${studentsWithoutBelbinCount}`);
-        console.log(`   📊 El algoritmo puede proceder con estudiantes con traits vacíos`);
+        console.log(`   📊 Con BELBIN real: ${studentsWithBelbinCount}`);
+        console.log(`   📊 Con BELBIN asignado por defecto: ${studentsWithoutBelbinCount}`);
+        console.log(`   📊 El algoritmo puede proceder con todos los estudiantes`);
 
         // Paso 4: Construir datos del algoritmo con traits reales
         console.log(`🔍 [AlgorithmExecute] Paso 4: Construyendo datos del algoritmo con traits reales...`);
@@ -787,12 +790,17 @@ activitiesRouter.post("/:id/algorithm/execute", verifyTeacher, async (req: Reque
         // CRÍTICO: Enviar los IDs de estudiantes en el orden exacto usado para el JSON
         const orderedStudentIds = studentsWithBelbin.map(student => student._id.toString());
         
+        // CORREGIDO: Enviar todos los campos que el worker espera
+        const customConstraints = processedAlgorithmData.constraints.filter((c: any) => 
+            c.type === 'SameTeam' || c.type === 'DifferentTeam'
+        );
+        
         const workerData = {
             activityId: activityId,
             teamSize: processedAlgorithmData.constraints.find((c: any) => c.type === 'SizeCardinality')?.team_size || 4,
-            customConstraints: processedAlgorithmData.constraints.filter((c: any) => 
-                c.type === 'SameTeam' || c.type === 'DifferentTeam'
-            ),
+            constraintsCount: customConstraints.length,
+            studentsCount: processedAlgorithmData.number_members,
+            customConstraints: customConstraints,
             // NUEVO: Enviar los IDs en el orden correcto para que el worker use el mismo mapeo
             orderedStudentIds: orderedStudentIds
         };
@@ -800,9 +808,9 @@ activitiesRouter.post("/:id/algorithm/execute", verifyTeacher, async (req: Reque
         console.log(`📋 [AlgorithmExecute] Datos del worker (con datos del frontend):`, {
             activityId: workerData.activityId,
             teamSize: workerData.teamSize,
-            constraintsCount: workerData.customConstraints.length,
-            studentsCount: processedAlgorithmData.number_members,
-            orderedStudentIds: workerData.orderedStudentIds
+            constraintsCount: workerData.constraintsCount,
+            studentsCount: workerData.studentsCount,
+            orderedStudentIds: workerData.orderedStudentIds?.length || 0
         });
 
         // Paso 10: Enviar notificación de inicio

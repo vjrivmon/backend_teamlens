@@ -62,36 +62,140 @@ handleActivityStudentsRouter.post("/", verifyTeacher, async (req: Request, res: 
         const emailErrors: string[] = []
         const emailSuccesses: string[] = []
 
-        for (let index = 0; index < emails.length; index++) {
-            const email = emails[index];
+        console.log(`🚀 [ActivityStudents] Iniciando procesamiento paralelo de ${emails.length} emails...`);
+
+        // 🔥 SOLUCIÓN: Procesamiento paralelo con Promise.allSettled para garantizar que todos los emails se procesen
+        const emailProcessingPromises = emails.map(async (email: string, index: number) => {
             console.log(`🔄 [ActivityStudents] Procesando email ${index + 1}/${emails.length}: ${email}`);
             
-            if (!existingUserEmails.includes(email)) {
-                temporalUsersEmail.push(email);
-                console.log(`➕ [ActivityStudents] Creando cuenta temporal para: ${email}`);
+                         // Si el usuario ya existe, marcarlo como éxito
+             if (existingUserEmails.includes(email)) {
+                 console.log(`✅ [ActivityStudents] Usuario ya existe: ${email}`);
+                 const existingUser = users?.find(user => user.email === email);
+                 return {
+                     email,
+                     status: 'existing',
+                     userId: existingUser?._id
+                 };
+             }
+
+            // Usuario no existe - crear cuenta temporal
+            temporalUsersEmail.push(email);
+            console.log(`➕ [ActivityStudents] Creando cuenta temporal para: ${email}`);
+            
+            try {
+                console.log(`🔧 [ActivityStudents] Llamando a createNonRegisteredAccount para: ${email}`);
+                const temporalUserId = await createNonRegisteredAccount(email);
                 
-                try {
-                    //crear cuenta temporal
-                    console.log(`🔧 [ActivityStudents] Llamando a createNonRegisteredAccount para: ${email}`);
-                    const temporalUserId = await createNonRegisteredAccount(email);
-                    
-                    if (temporalUserId) {
-                        existingUserIds.push(temporalUserId);
-                        emailSuccesses.push(email);
-                        console.log(`✅ [ActivityStudents] Usuario temporal creado exitosamente: ${email} (ID: ${temporalUserId})`);
-                        console.log(`📧 [ActivityStudents] Email de invitación enviado a: ${email}`);
-                    } else {
-                        console.error(`❌ [ActivityStudents] No se pudo crear usuario temporal para: ${email}`);
-                        emailErrors.push(`${email}: No se pudo crear cuenta temporal`);
+                if (temporalUserId) {
+                    console.log(`✅ [ActivityStudents] Usuario temporal creado exitosamente: ${email} (ID: ${temporalUserId})`);
+                    console.log(`📧 [ActivityStudents] Email de invitación enviado a: ${email}`);
+                    return {
+                        email,
+                        status: 'created',
+                        userId: temporalUserId
+                    };
+                } else {
+                    console.error(`❌ [ActivityStudents] No se pudo crear usuario temporal para: ${email}`);
+                    return {
+                        email,
+                        status: 'error',
+                        error: 'No se pudo crear cuenta temporal'
+                    };
+                }
+            } catch (error: any) {
+                console.error(`❌ [ActivityStudents] Error creando cuenta temporal para ${email}:`, error);
+                console.error(`❌ [ActivityStudents] Stack trace:`, error.stack);
+                return {
+                    email,
+                    status: 'error',
+                    error: error.message
+                };
+            }
+        });
+
+        // Esperar a que TODAS las operaciones de email se completen
+        const emailResults = await Promise.allSettled(emailProcessingPromises);
+
+        // Procesar resultados y construir listas finales
+        emailResults.forEach((result, index) => {
+            const email = emails[index];
+            
+            if (result.status === 'fulfilled') {
+                const data = result.value;
+                
+                if (data.status === 'created' || data.status === 'existing') {
+                    if (data.userId) {
+                        existingUserIds.push(data.userId);
                     }
-                } catch (error: any) {
-                    console.error(`❌ [ActivityStudents] Error creando cuenta temporal para ${email}:`, error);
-                    console.error(`❌ [ActivityStudents] Stack trace:`, error.stack);
-                    emailErrors.push(`${email}: ${error.message}`);
+                    emailSuccesses.push(data.email);
+                } else if (data.status === 'error') {
+                    emailErrors.push(`${data.email}: ${data.error}`);
                 }
             } else {
-                console.log(`✅ [ActivityStudents] Usuario ya existe: ${email}`);
-                emailSuccesses.push(email); // Añadir a éxitos aunque ya exista
+                // Promise fue rechazada
+                console.error(`❌ [ActivityStudents] Promise rechazada para ${email}:`, result.reason);
+                emailErrors.push(`${email}: ${result.reason.message || 'Error inesperado'}`);
+            }
+        });
+
+        console.log(`🏁 [ActivityStudents] Procesamiento paralelo completado`);
+        console.log(`   - Promises resueltas: ${emailResults.filter(r => r.status === 'fulfilled').length}/${emailResults.length}`);
+        console.log(`   - Promises rechazadas: ${emailResults.filter(r => r.status === 'rejected').length}/${emailResults.length}`);
+
+        // 🛡️ MANEJO DE ERRORES PARCIALES: Verificar si hay demasiados errores para considerar rollback
+        const successRate = emailSuccesses.length / emails.length;
+        const criticalErrorThreshold = 0.5; // Si menos del 50% tiene éxito, considerar rollback
+        
+        if (successRate < criticalErrorThreshold && temporalUsersEmail.length > 0) {
+            console.warn(`⚠️ [ActivityStudents] Tasa de éxito baja (${Math.round(successRate * 100)}%). Evaluando rollback...`);
+            
+            // Obtener IDs de usuarios temporales creados exitosamente
+            const temporalUserIds: ObjectId[] = [];
+            emailResults.forEach((result, index) => {
+                if (result.status === 'fulfilled' && result.value.status === 'created' && result.value.userId) {
+                    temporalUserIds.push(result.value.userId);
+                }
+            });
+
+            if (temporalUserIds.length > 0) {
+                console.log(`🗑️ [ActivityStudents] Ejecutando rollback para ${temporalUserIds.length} usuarios temporales...`);
+                
+                try {
+                    // Eliminar usuarios temporales creados en esta operación
+                    const rollbackResult = await collections.users?.deleteMany({ 
+                        _id: { $in: temporalUserIds },
+                        isTemporary: true 
+                    });
+                    
+                    console.log(`✅ [ActivityStudents] Rollback ejecutado: ${rollbackResult?.deletedCount} usuarios temporales eliminados`);
+                    
+                    // Limpiar arrays para reflejar el rollback
+                    temporalUsersEmail.length = 0;
+                    emailSuccesses.splice(0);
+                    existingUserIds.splice(0);
+                    
+                    // Mantener solo usuarios existentes
+                    users?.forEach(user => {
+                        if (emails.includes(user.email)) {
+                            existingUserIds.push(user._id);
+                            emailSuccesses.push(user.email);
+                        }
+                    });
+                    
+                    // Añadir todos los emails fallidos a errores
+                    temporalUsersEmail.forEach(email => {
+                        if (!emailErrors.some(error => error.includes(email))) {
+                            emailErrors.push(`${email}: Rollback ejecutado debido a tasa de error alta`);
+                        }
+                    });
+                    
+                    console.log(`🔄 [ActivityStudents] Post-rollback: ${emailSuccesses.length} éxitos, ${emailErrors.length} errores`);
+                    
+                } catch (rollbackError: any) {
+                    console.error(`❌ [ActivityStudents] Error durante rollback:`, rollbackError);
+                    // No fallar la operación principal por errores de rollback
+                }
             }
         }
 

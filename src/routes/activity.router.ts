@@ -971,7 +971,7 @@ const startAlgorithmWorker = (workerData: any) => {
                 });
 
                 // Procesar los resultados y crear grupos
-                const teams = JSON.parse(workerResult.result);
+                const teams = workerResult.teams;
                 console.log(`👥 [AlgorithmWorker] Creando ${teams.length} grupos para actividad: ${activityId}`);
 
                 // Crear grupos basados en los resultados del algoritmo
@@ -1115,7 +1115,7 @@ const startAlgorithmWorkerWithCallback = (workerData: any, resolve: (value: any)
                 });
 
                 // Procesar los resultados y crear grupos
-                const teams = JSON.parse(workerResult.result);
+                const teams = workerResult.teams;
                 console.log(`👥 [AlgorithmWorkerCallback] Creando ${teams.length} grupos para actividad: ${activityId}`);
 
                 // Crear grupos basados en los resultados del algoritmo

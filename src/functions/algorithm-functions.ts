@@ -201,7 +201,7 @@ export const getActivityMembersWithTraits = async (activityId: string): Promise<
 
             if (traits.length > 0) {
                 studentsWithBelbin++;
-                console.log(`📝 [AlgorithmFunctions] Estudiante ${student.email}: ${traits.join(', ')}`);
+            console.log(`📝 [AlgorithmFunctions] Estudiante ${student.email}: ${traits.join(', ')}`);
             } else {
                 studentsWithoutBelbin++;
                 console.log(`📝 [AlgorithmFunctions] Estudiante ${student.email}: sin BELBIN - traits vacíos`);

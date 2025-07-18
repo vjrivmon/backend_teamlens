@@ -50,18 +50,16 @@ def execute_real_algorithm(data):
         print("🚀 Iniciando algoritmo de optimización...", file=sys.stderr)
         start_time = time.time()
         
-        # Instanciar algoritmo genético directamente
-        algorithm = OrderBasedBitKeyGA(problem)
-        
+        # Instanciar algoritmo genético directamente con parámetros en el constructor
         print(f"⚙️ Configurando algoritmo: OrderBasedBitKeyGA", file=sys.stderr)
-        
-        # Configurar parámetros para un tiempo real de ejecución
-        algorithm.set_parameters({
-            'population_size': 50,
-            'generations': 100,
-            'mutation_rate': 0.1,
-            'crossover_rate': 0.8
-        })
+        algorithm = OrderBasedBitKeyGA(
+            problem,
+            pop_size=50,              # population_size
+            p_cross=0.8,             # crossover_rate  
+            p_mut=0.1,               # mutation_rate
+            tournament_size=0.1,
+            exchange_operations=3
+        )
         
         print("🔄 Ejecutando algoritmo de optimización (esto puede tardar 1-3 minutos)...", file=sys.stderr)
         

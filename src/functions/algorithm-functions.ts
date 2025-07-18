@@ -59,12 +59,12 @@ export const getAlgorithmFilePath = (activityId: string): string => {
 
 /**
  * Verifica si al menos algunos estudiantes de una actividad han completado el test BELBIN
- * MODIFICADO: Ya no requiere que TODOS hayan completado, solo que haya al menos algunos
+ * CORREGIDO: SIEMPRE permite el algoritmo si hay estudiantes, asignando traits por defecto
  * @param activityId ID de la actividad
- * @returns Promise<boolean> true si al menos algunos han completado BELBIN
+ * @returns Promise<boolean> true si hay estudiantes (independientemente de BELBIN)
  */
 export const validateMinimumStudentsWithBelbin = async (activityId: string): Promise<boolean> => {
-    console.log(`🔍 [AlgorithmFunctions] Validando que haya estudiantes con BELBIN para actividad: ${activityId}`);
+    console.log(`🔍 [AlgorithmFunctions] Validando estudiantes para algoritmo en actividad: ${activityId}`);
 
     try {
         // Obtener la actividad y sus estudiantes
@@ -75,9 +75,10 @@ export const validateMinimumStudentsWithBelbin = async (activityId: string): Pro
             return false;
         }
 
-        console.log(`👥 [AlgorithmFunctions] Validando ${activity.students.length} estudiantes...`);
+        const totalStudents = activity.students.length;
+        console.log(`👥 [AlgorithmFunctions] Encontrados ${totalStudents} estudiantes en total`);
 
-        // Verificar que al menos algunos estudiantes han completado BELBIN
+        // Verificar cuántos estudiantes han completado BELBIN (para estadísticas)
         const studentsWithBelbin = await collections.users?.find({
             _id: { $in: activity.students },
             "askedQuestionnaires.questionnaire": { $exists: true },
@@ -88,21 +89,29 @@ export const validateMinimumStudentsWithBelbin = async (activityId: string): Pro
             }
         }).toArray();
 
-        const completedCount = studentsWithBelbin?.length || 0;
-        const totalCount = activity.students.length;
+        const belbinCount = studentsWithBelbin?.length || 0;
+        const withoutBelbinCount = totalStudents - belbinCount;
         
-        console.log(`📊 [AlgorithmFunctions] BELBIN completado: ${completedCount}/${totalCount}`);
+        console.log(`📊 [AlgorithmFunctions] Distribución de estudiantes:`);
+        console.log(`   ✅ Con BELBIN: ${belbinCount}`);
+        console.log(`   🔄 Sin BELBIN: ${withoutBelbinCount} (se asignarán traits por defecto)`);
 
-        if (completedCount > 0) {
-            console.log(`✅ [AlgorithmFunctions] ${completedCount} estudiantes han completado BELBIN - algoritmo puede proceder`);
+        // CRÍTICO: SIEMPRE permitir el algoritmo si hay estudiantes
+        // El sistema debe distribuir a TODOS los estudiantes, con o sin BELBIN
+        if (totalStudents > 0) {
+            if (belbinCount > 0) {
+                console.log(`✅ [AlgorithmFunctions] ${belbinCount}/${totalStudents} estudiantes con BELBIN - algoritmo optimizado procederá`);
+            } else {
+                console.log(`🎲 [AlgorithmFunctions] Ningún estudiante con BELBIN - algoritmo con traits por defecto procederá`);
+            }
             return true;
         } else {
-            console.log(`❌ [AlgorithmFunctions] Ningún estudiante ha completado BELBIN`);
+            console.log(`❌ [AlgorithmFunctions] No hay estudiantes para procesar`);
             return false;
         }
 
     } catch (error: any) {
-        console.error(`💥 [AlgorithmFunctions] Error validando BELBIN:`, error);
+        console.error(`💥 [AlgorithmFunctions] Error validando estudiantes:`, error);
         return false;
     }
 };
@@ -158,37 +167,42 @@ export const validateAllStudentsCompletedBelbin = async (activityId: string): Pr
 };
 
 /**
- * MODIFICADO: Obtiene TODOS los miembros de una actividad con sus traits BELBIN
- * Incluye estudiantes SIN BELBIN con traits vacíos []
- * AHORA INCLUYE IDs para correlación perfecta con worker
+ * Obtiene todos los miembros de una actividad con sus traits BELBIN
+ * CORREGIDO: Asigna traits por defecto a estudiantes sin BELBIN para distribución balanceada
  * @param activityId ID de la actividad
- * @returns Promise<AlgorithmMember[]> lista con todos los miembros y sus traits + IDs
+ * @returns Promise<AlgorithmMember[]> Array de miembros con traits (reales o por defecto)
  */
 export const getActivityMembersWithTraits = async (activityId: string): Promise<AlgorithmMember[]> => {
-    console.log(`👥 [AlgorithmFunctions] Obteniendo TODOS los miembros con traits para actividad: ${activityId}`);
+    console.log(`🔍 [AlgorithmFunctions] Obteniendo miembros con traits para actividad: ${activityId}`);
 
     try {
+        // Obtener la actividad y sus estudiantes
         const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
         
-        if (!activity || !activity.students) {
-            console.log(`⚠️ [AlgorithmFunctions] Actividad sin estudiantes válidos`);
+        if (!activity || !activity.students || activity.students.length === 0) {
+            console.log(`⚠️ [AlgorithmFunctions] Actividad sin estudiantes: ${activityId}`);
             return [];
         }
 
-        // Obtener TODOS los estudiantes de la actividad
+        // Obtener todos los estudiantes de la actividad
         const allStudents = await collections.users?.find({
             _id: { $in: activity.students }
         }).toArray();
 
         if (!allStudents || allStudents.length === 0) {
-            console.log(`⚠️ [AlgorithmFunctions] No se encontraron estudiantes en la actividad`);
+            console.log(`⚠️ [AlgorithmFunctions] No se encontraron estudiantes válidos`);
             return [];
         }
+
+        console.log(`👥 [AlgorithmFunctions] Procesando ${allStudents.length} estudiantes...`);
 
         let studentsWithBelbin = 0;
         let studentsWithoutBelbin = 0;
 
-        const members: AlgorithmMember[] = allStudents.map(student => {
+        // CORREGIDO: Traits por defecto para distribución balanceada
+        const DEFAULT_BELBIN_TRAITS = ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI"];
+
+        const members: AlgorithmMember[] = allStudents.map((student, index) => {
             // Buscar el resultado BELBIN del estudiante
             const belbinQuestionnaire = student.askedQuestionnaires?.find(aq => 
                 BELBIN_TRAITS.includes(aq.result)
@@ -196,28 +210,32 @@ export const getActivityMembersWithTraits = async (activityId: string): Promise<
 
             const primaryTrait = belbinQuestionnaire?.result || "";
             
-            // Si tiene BELBIN, usar el trait; si no, array vacío
-            const traits = primaryTrait ? [primaryTrait] : [];
-
-            if (traits.length > 0) {
+            let traits: string[] = [];
+            
+            if (primaryTrait) {
+                // Estudiante tiene BELBIN real
+                traits = [primaryTrait];
                 studentsWithBelbin++;
-            console.log(`📝 [AlgorithmFunctions] Estudiante ${student.email}: ${traits.join(', ')}`);
+                console.log(`📝 [AlgorithmFunctions] Estudiante ${student.email}: BELBIN real = ${traits.join(', ')}`);
             } else {
+                // CRÍTICO: Asignar trait por defecto basado en distribución cíclica
+                const defaultTrait = DEFAULT_BELBIN_TRAITS[index % DEFAULT_BELBIN_TRAITS.length];
+                traits = [defaultTrait];
                 studentsWithoutBelbin++;
-                console.log(`📝 [AlgorithmFunctions] Estudiante ${student.email}: sin BELBIN - traits vacíos`);
+                console.log(`📝 [AlgorithmFunctions] Estudiante ${student.email}: BELBIN por defecto = ${defaultTrait}`);
             }
 
             return {
-                id: student._id.toString(),  // NUEVO: Incluir ID para correlación perfecta
-                email: student.email,        // NUEVO: Para debugging y logs
-                traits: traits               // BELBIN traits o array vacío
+                id: student._id.toString(),  // ID para correlación perfecta
+                email: student.email,        // Para debugging y logs
+                traits: traits               // BELBIN traits reales o por defecto (NUNCA vacío)
             };
         });
 
-        console.log(`✅ [AlgorithmFunctions] ${members.length} miembros procesados:`);
-        console.log(`   📊 Con BELBIN: ${studentsWithBelbin}`);
-        console.log(`   📊 Sin BELBIN: ${studentsWithoutBelbin}`);
-        console.log(`   📊 El algoritmo puede proceder con estudiantes con traits vacíos`);
+        console.log(`✅ [AlgorithmFunctions] ${members.length} miembros procesados exitosamente:`);
+        console.log(`   📊 Con BELBIN real: ${studentsWithBelbin}`);
+        console.log(`   📊 Con BELBIN por defecto: ${studentsWithoutBelbin}`);
+        console.log(`   🎯 TODOS los estudiantes tienen traits - algoritmo puede proceder`);
         
         return members;
 

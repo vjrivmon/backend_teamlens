@@ -372,7 +372,7 @@ activitiesRouter.put("/:id/algorithm/config", verifyTeacher, async (req: Request
                     maxTeams: config.maxTeams
                 },
                 fileGenerated: fileGeneratedAfterChange,
-                filePath: filePath,
+                filePath,
                 canRunAlgorithm: algorithmStatus === 'ready' && fileGeneratedAfterChange,
                 configuredAt: config.lastConfiguredAt?.toISOString(),
                 systemInfo: {
@@ -1718,7 +1718,7 @@ activitiesRouter.get("/:id/algorithm/preview", verifyTeacher, async (req: Reques
 
 /**
  * Función auxiliar para generar equipos simulados de manera balanceada
- * CORREGIDO: Usa parámetros del profesor, no cálculos automáticos
+ * CORREGIDO: Respeta EXACTAMENTE el número de grupos solicitado por el profesor
  * @param students Array de estudiantes con traits BELBIN
  * @param teamSize Tamaño deseado de cada equipo (del profesor)
  * @param minTeams Número mínimo de equipos (del profesor)
@@ -1734,7 +1734,11 @@ function generateSimulatedTeams(
     console.log(`🎲 [SimulatedTeams] Generando equipos simulados para ${students.length} estudiantes`);
     console.log(`🎲 [SimulatedTeams] Parámetros del profesor: ${teamSize} por equipo, ${minTeams}-${maxTeams} equipos`);
 
-    // Agrupar estudiantes por trait BELBIN
+    // CRÍTICO: Usar EXACTAMENTE maxTeams (el profesor quiere este número específico)
+    const targetTeams = maxTeams;
+    console.log(`🎯 [SimulatedTeams] Creando EXACTAMENTE ${targetTeams} equipos como solicitó el profesor`);
+
+    // Agrupar estudiantes por trait BELBIN para distribución balanceada
     const studentsByTrait: any = {};
     students.forEach(student => {
         const belbinResult = student.askedQuestionnaires?.find((aq: any) => 
@@ -1751,63 +1755,57 @@ function generateSimulatedTeams(
     console.log(`📊 [SimulatedTeams] Distribución por traits:`, Object.keys(studentsByTrait).map(trait => 
         `${trait}: ${studentsByTrait[trait].length}`).join(', '));
 
-    // Determinar número de equipos óptimo dentro del rango del profesor
-    const minStudentsNeeded = minTeams * teamSize;
-    const maxStudentsNeeded = maxTeams * teamSize;
-    
-    let targetTeams = minTeams;
-    
-    if (students.length <= maxStudentsNeeded) {
-        // Calcular el mejor número de equipos dentro del rango permitido
-        targetTeams = Math.max(minTeams, Math.min(maxTeams, Math.ceil(students.length / teamSize)));
-    } else {
-        // Si hay más estudiantes de los que pueden caber en maxTeams, usar maxTeams
-        targetTeams = maxTeams;
-    }
-
-    console.log(`🎯 [SimulatedTeams] Usando ${targetTeams} equipos (rango profesor: ${minTeams}-${maxTeams})`);
-
     const teams: any[][] = [];
     
-    // Inicializar equipos vacíos
+    // CRÍTICO: Inicializar EXACTAMENTE el número de equipos solicitado
     for (let i = 0; i < targetTeams; i++) {
         teams.push([]);
     }
+    
+    console.log(`✅ [SimulatedTeams] Inicializados ${teams.length} equipos vacíos`);
 
-    // Distribuir estudiantes tratando de balancear traits
+    // Distribuir estudiantes de manera balanceada entre TODOS los equipos
     const traits = Object.keys(studentsByTrait);
     let currentTeamIndex = 0;
 
-    // Primera pasada: distribuir un estudiante de cada trait en cada equipo
+    // Primera pasada: distribuir estudiantes por traits de manera cíclica
     traits.forEach(trait => {
         const studentsOfTrait = studentsByTrait[trait];
         
         studentsOfTrait.forEach((student: any) => {
-            if (teams[currentTeamIndex].length < teamSize) {
-                teams[currentTeamIndex].push(student);
-                currentTeamIndex = (currentTeamIndex + 1) % targetTeams;
-            }
+            teams[currentTeamIndex].push(student);
+            currentTeamIndex = (currentTeamIndex + 1) % targetTeams;
         });
     });
 
-    // Segunda pasada: distribuir estudiantes restantes
-    const remainingStudents = students.filter(student => 
-        !teams.some(team => team.includes(student))
-    );
-
-    remainingStudents.forEach(student => {
-        // Encontrar el equipo con menos miembros que aún no esté lleno
-        const teamWithLeastMembers = teams.reduce((minTeam, currentTeam, index) => {
-            return (currentTeam.length < teams[minTeam].length && currentTeam.length < teamSize) ? index : minTeam;
-        }, 0);
-
-        if (teams[teamWithLeastMembers].length < teamSize) {
-            teams[teamWithLeastMembers].push(student);
-        }
+    // Segunda pasada: verificar si algún estudiante quedó sin asignar
+    const assignedStudents = new Set();
+    teams.forEach(team => {
+        team.forEach(student => assignedStudents.add(student));
     });
 
-    console.log(`✅ [SimulatedTeams] ${teams.length} equipos generados con tamaños: ${teams.map(team => team.length).join(', ')}`);
-    console.log(`🎯 [SimulatedTeams] Respetando parámetros del profesor: ${minTeams}-${maxTeams} equipos de ${teamSize}`);
+    const unassignedStudents = students.filter(student => !assignedStudents.has(student));
+    
+    if (unassignedStudents.length > 0) {
+        console.log(`📋 [SimulatedTeams] Asignando ${unassignedStudents.length} estudiantes restantes`);
+        
+        unassignedStudents.forEach((student, index) => {
+            const teamIndex = index % targetTeams;
+            teams[teamIndex].push(student);
+        });
+    }
+
+    // Información final
+    const teamSizes = teams.map(team => team.length);
+    console.log(`✅ [SimulatedTeams] ${teams.length} equipos generados con tamaños: ${teamSizes.join(', ')}`);
+    console.log(`🎯 [SimulatedTeams] TOTAL estudiantes asignados: ${teamSizes.reduce((a, b) => a + b, 0)}/${students.length}`);
+    console.log(`✅ [SimulatedTeams] Respetado EXACTAMENTE el número solicitado: ${targetTeams} equipos`);
+    
+    // Validación final: asegurar que todos los estudiantes estén asignados
+    const totalAssigned = teams.reduce((total, team) => total + team.length, 0);
+    if (totalAssigned !== students.length) {
+        console.error(`🚨 [SimulatedTeams] ERROR: ${students.length - totalAssigned} estudiantes sin asignar`);
+    }
     
     return teams;
 }

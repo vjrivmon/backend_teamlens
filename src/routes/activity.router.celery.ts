@@ -111,65 +111,76 @@ activitiesCeleryRouter.post("/:id/algorithm/execute-celery", verifyTeacher, asyn
         }
 
         // === FASE 4: PROCESAMIENTO DE ESTUDIANTES Y TRAITS ===
-        logger.info(`🔍 [CELERY-ALGORITHM] Fase 4: Procesando estudiantes con BELBIN...`);
+        logger.info(`🔍 [CELERY-ALGORITHM] Fase 4: Procesando TODOS los estudiantes...`);
         
         const selectedStudentObjectIds = selectedStudentIds.map((id: string) => new ObjectId(id));
         
-        // Obtener estudiantes con traits BELBIN
-        const studentsWithBelbin = await collections.users?.find({
-            _id: { $in: selectedStudentObjectIds },
-            "askedQuestionnaires": {
-                $elemMatch: {
-                    "result": { $in: ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI"] }
-                }
-            }
+        // Obtener TODOS los estudiantes seleccionados (con o sin BELBIN)
+        const allSelectedStudents = await collections.users?.find({
+            _id: { $in: selectedStudentObjectIds }
         }).toArray();
 
-        if (!studentsWithBelbin || studentsWithBelbin.length === 0) {
-            logger.error(`❌ [CELERY-ALGORITHM] No hay estudiantes con BELBIN válido`);
+        if (!allSelectedStudents || allSelectedStudents.length === 0) {
+            logger.error(`❌ [CELERY-ALGORITHM] No se encontraron estudiantes válidos`);
             return res.status(400).json({
                 success: false,
-                error: 'NO_BELBIN_RESULTS',
-                message: "No selected students have completed BELBIN questionnaire",
+                error: 'NO_STUDENTS_FOUND',
+                message: "No valid students found with provided IDs",
                 selectedCount: selectedStudentIds.length,
                 requestId
             });
         }
 
-        // Verificar que todos los estudiantes seleccionados tienen BELBIN
-        if (studentsWithBelbin.length !== selectedStudentIds.length) {
-            const missingCount = selectedStudentIds.length - studentsWithBelbin.length;
-            logger.error(`❌ [CELERY-ALGORITHM] ${missingCount} estudiantes sin BELBIN`);
-            
-            return res.status(400).json({
-                success: false,
-                error: 'INCOMPLETE_BELBIN_DATA',
-                message: `${missingCount} students are missing BELBIN results`,
-                totalSelected: selectedStudentIds.length,
-                withBelbin: studentsWithBelbin.length,
-                missingBelbin: missingCount,
-                requestId
-            });
-        }
+        // Verificar cuántos estudiantes tienen BELBIN (para estadísticas)
+        const studentsWithBelbin = allSelectedStudents.filter(student => 
+            student.askedQuestionnaires?.some(aq => 
+                ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI"].includes(aq.result)
+            )
+        );
+
+        const belbinCount = studentsWithBelbin.length;
+        const withoutBelbinCount = allSelectedStudents.length - belbinCount;
+
+        logger.info(`📊 [CELERY-ALGORITHM] Distribución de estudiantes:`);
+        logger.info(`   ✅ Con BELBIN: ${belbinCount}`);
+        logger.info(`   🔄 Sin BELBIN: ${withoutBelbinCount} (se asignarán traits por defecto)`);
+
+        // CRÍTICO: PROCESAR TODOS LOS ESTUDIANTES (con traits por defecto para quienes no tengan BELBIN)
+        logger.info(`✅ [CELERY-ALGORITHM] Procesando ${allSelectedStudents.length} estudiantes con algoritmo robusto`);
 
         // === FASE 5: CONSTRUCCIÓN DE DATOS DEL ALGORITMO ===
         logger.info(`🔍 [CELERY-ALGORITHM] Fase 5: Construyendo datos del algoritmo...`);
         
         // Crear mapeo de índices para constraints
         const studentIdToIndex = new Map();
-        const membersWithTraits = studentsWithBelbin.map((student, index) => {
+        
+        // CORREGIDO: Traits por defecto para distribución balanceada
+        const DEFAULT_BELBIN_TRAITS = ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI"];
+        
+        const membersWithTraits = allSelectedStudents.map((student, index) => {
             studentIdToIndex.set(student._id.toString(), index);
             
             const belbinResult = student.askedQuestionnaires?.find(
                 aq => ["TW", "CW", "CH", "ME", "CF", "SH", "PL", "RI"].includes(aq.result)
             );
             
-            // Mapear códigos BELBIN si es necesario
-            let mappedResult = belbinResult?.result || "SH";
-            if (mappedResult === "IM") mappedResult = "CW";
-            if (mappedResult === "CO") mappedResult = "CH";
+            let traits: string[] = [];
             
-            return { traits: [mappedResult] };
+            if (belbinResult) {
+                // Estudiante con BELBIN real
+                let mappedResult = belbinResult.result;
+                if (mappedResult === "IM") mappedResult = "CW";
+                if (mappedResult === "CO") mappedResult = "CH";
+                traits = [mappedResult];
+                logger.debug(`📝 [CELERY-ALGORITHM] Estudiante ${student.email}: BELBIN real = ${traits.join(', ')}`);
+            } else {
+                // CRÍTICO: Asignar trait por defecto basado en distribución cíclica
+                const defaultTrait = DEFAULT_BELBIN_TRAITS[index % DEFAULT_BELBIN_TRAITS.length];
+                traits = [defaultTrait];
+                logger.debug(`📝 [CELERY-ALGORITHM] Estudiante ${student.email}: BELBIN por defecto = ${defaultTrait}`);
+            }
+            
+            return { traits: traits };
         });
 
         // Construir datos completos del algoritmo
@@ -228,13 +239,13 @@ activitiesCeleryRouter.post("/:id/algorithm/execute-celery", verifyTeacher, asyn
         }
 
         // === FASE 7: PREPARACIÓN DE METADATOS ===
-        const orderedStudentIds = studentsWithBelbin.map(student => student._id.toString());
+        const orderedStudentIds = allSelectedStudents.map(student => student._id.toString());
         
         const taskMetadata = {
             requestId,
             activityTitle: activity.title,
             teacherId: req.session?.authuser,
-            totalStudents: selectedStudentIds.length,
+            totalStudents: allSelectedStudents.length,
             constraintsCount: processedAlgorithmData.constraints.length,
             timestamp: new Date().toISOString(),
             environment: process.env.NODE_ENV || 'development'
@@ -288,7 +299,7 @@ activitiesCeleryRouter.post("/:id/algorithm/execute-celery", verifyTeacher, asyn
         try {
             await addUserNotification(new ObjectId(activity.teacher), {
                 title: '🚀 Algoritmo iniciado (Sistema Distribuido)',
-                description: `El algoritmo ha comenzado a procesar ${membersWithTraits.length} estudiantes para "${activity.title}" usando el sistema de colas distribuido. Tiempo estimado: ${estimateExecutionTime(membersWithTraits.length)} minutos.`,
+                description: `El algoritmo ha comenzado a procesar ${allSelectedStudents.length} estudiantes para "${activity.title}" usando el sistema de colas distribuido. Tiempo estimado: ${estimateExecutionTime(allSelectedStudents.length)} minutos.`,
                 link: `/activities/${activityId}`,
                 metadata: {
                     taskId: celeryTaskId,
@@ -306,7 +317,7 @@ activitiesCeleryRouter.post("/:id/algorithm/execute-celery", verifyTeacher, asyn
         logger.info(`🎉 [CELERY-ALGORITHM] TAREA ENVIADA EXITOSAMENTE`);
         logger.info(`🎉 [CELERY-ALGORITHM] Task ID: ${celeryTaskId}`);
         logger.info(`🎉 [CELERY-ALGORITHM] Request ID: ${requestId}`);
-        logger.info(`🎉 [CELERY-ALGORITHM] Estudiantes: ${membersWithTraits.length}`);
+        logger.info(`🎉 [CELERY-ALGORITHM] Estudiantes: ${allSelectedStudents.length}`);
         logger.info(`🎉 [CELERY-ALGORITHM] ==========================================`);
 
         return res.status(202).json({
@@ -317,9 +328,9 @@ activitiesCeleryRouter.post("/:id/algorithm/execute-celery", verifyTeacher, asyn
                 requestId,
                 activityId,
                 activityTitle: activity.title,
-                studentsCount: membersWithTraits.length,
+                studentsCount: allSelectedStudents.length,
                 constraintsCount: processedAlgorithmData.constraints.length,
-                estimatedTimeMinutes: estimateExecutionTime(membersWithTraits.length),
+                estimatedTimeMinutes: estimateExecutionTime(allSelectedStudents.length),
                 system: 'celery_distributed',
                 timestamp: new Date().toISOString(),
                 trackingUrl: `/api/activities/${activityId}/algorithm/status/${celeryTaskId}`,
@@ -433,139 +444,4 @@ activitiesCeleryRouter.get("/:id/algorithm/status/:taskId", verifyTeacher, async
         });
 
     } catch (error: any) {
-        logger.error(`💥 [CELERY-STATUS] Error obteniendo estado:`, error);
-        return res.status(500).json({
-            success: false,
-            error: 'INTERNAL_SERVER_ERROR',
-            message: 'Failed to get task status',
-            details: error.message
-        });
-    }
-});
-
-// ============================================================================
-// ENDPOINT PARA CANCELAR TAREAS
-// ============================================================================
-
-/**
- * Endpoint para cancelar una tarea del algoritmo
- * @route POST /activities/:id/algorithm/cancel/:taskId
- */
-activitiesCeleryRouter.post("/:id/algorithm/cancel/:taskId", verifyTeacher, async (req: Request, res: Response) => {
-    const { id: activityId, taskId } = req.params;
-    const { terminate = false } = req.body;
-    
-    try {
-        logger.info(`🛑 [CELERY-CANCEL] Cancelando tarea: ${taskId} para actividad: ${activityId}`);
-        
-        // Verificar permisos
-        const activity = await collections.activities?.findOne({ 
-            _id: new ObjectId(activityId),
-            teacher: new ObjectId(req.session?.authuser as string)
-        });
-        
-        if (!activity) {
-            return res.status(404).json({
-                success: false,
-                error: 'ACTIVITY_NOT_FOUND',
-                message: 'Activity not found or insufficient permissions'
-            });
-        }
-
-        // Cancelar tarea en Celery
-        await celeryService.connect();
-        await celeryService.revokeTask(taskId, terminate);
-
-        // Actualizar estado en base de datos
-        await collections.activities?.updateOne(
-            { _id: new ObjectId(activityId) },
-            {
-                $set: {
-                    algorithmStatus: 'cancelled',
-                    algorithmCancelledAt: new Date(),
-                    updatedAt: new Date()
-                },
-                $unset: {
-                    algorithmTaskId: ''
-                }
-            }
-        );
-
-        logger.info(`✅ [CELERY-CANCEL] Tarea cancelada exitosamente: ${taskId}`);
-
-        return res.status(200).json({
-            success: true,
-            message: 'Task cancelled successfully',
-            data: {
-                taskId,
-                activityId,
-                cancelled: true,
-                terminate,
-                timestamp: new Date().toISOString()
-            }
-        });
-
-    } catch (error: any) {
-        logger.error(`💥 [CELERY-CANCEL] Error cancelando tarea:`, error);
-        return res.status(500).json({
-            success: false,
-            error: 'INTERNAL_SERVER_ERROR',
-            message: 'Failed to cancel task',
-            details: error.message
-        });
-    }
-});
-
-// ============================================================================
-// ENDPOINT PARA MONITOREO DE COLAS
-// ============================================================================
-
-/**
- * Endpoint para obtener estadísticas del sistema de colas
- * @route GET /activities/algorithm/queue-stats
- */
-activitiesCeleryRouter.get("/algorithm/queue-stats", verifyTeacher, async (req: Request, res: Response) => {
-    try {
-        await celeryService.connect();
-        
-        const queueStats = await celeryService.getQueueStats();
-        const healthStatus = await celeryService.healthCheck();
-        
-        return res.status(200).json({
-            success: true,
-            data: {
-                healthy: healthStatus,
-                queues: queueStats,
-                system: 'celery_distributed',
-                timestamp: new Date().toISOString(),
-                monitoringUrl: process.env.NODE_ENV === 'development' ? 'http://localhost:5555' : null
-            }
-        });
-
-    } catch (error: any) {
-        logger.error(`💥 [CELERY-STATS] Error obteniendo estadísticas:`, error);
-        return res.status(500).json({
-            success: false,
-            error: 'INTERNAL_SERVER_ERROR',
-            message: 'Failed to get queue statistics',
-            details: error.message
-        });
-    }
-});
-
-// ============================================================================
-// FUNCIONES AUXILIARES
-// ============================================================================
-
-/**
- * Estima el tiempo de ejecución basado en el número de estudiantes
- * @param studentCount Número de estudiantes
- * @returns Tiempo estimado en minutos
- */
-const estimateExecutionTime = (studentCount: number): number => {
-    if (studentCount <= 10) return 1;
-    if (studentCount <= 20) return 2;
-    if (studentCount <= 30) return 3;
-    if (studentCount <= 50) return 5;
-    return Math.ceil(studentCount / 10);
-}; 
+        logger.error(`

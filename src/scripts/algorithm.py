@@ -83,6 +83,7 @@ def execute_real_algorithm(data):
 def fallback_algorithm(data):
     """
     Algoritmo de respaldo que al menos respeta las restricciones básicas
+    CORREGIDO: Ahora respeta restricciones DifferentTeam y crea el número exacto de grupos
     """
     print("🔄 Ejecutando algoritmo de respaldo mejorado...", file=sys.stderr)
     
@@ -117,76 +118,137 @@ def fallback_algorithm(data):
     
     # Simular tiempo de procesamiento real
     print("⏱️ Simulando tiempo de procesamiento real...", file=sys.stderr)
-    time.sleep(2 + len(members) * 0.5)  # 2 segundos base + 0.5 por miembro
+    time.sleep(2 + len(members) * 0.1)  # Reducido para mejor UX
     
-    # Crear equipos respetando SizeCardinality
+    # Función auxiliar para verificar restricciones DifferentTeam
+    def violates_different_team_constraints(teams, member_to_add, target_team_index):
+        """
+        Verifica si añadir un miembro a un equipo violaría restricciones DifferentTeam
+        """
+        target_team = teams[target_team_index]
+        
+        for constraint in different_team_constraints:
+            if len(constraint) >= 2:
+                # Convertir constraint a enteros si es necesario
+                constraint_members = []
+                for member in constraint:
+                    if isinstance(member, (int, float)):
+                        constraint_members.append(int(member))
+                
+                # Verificar si el miembro a añadir está en alguna restricción DifferentTeam
+                if member_to_add in constraint_members:
+                    # Verificar si algún otro miembro de la misma restricción ya está en el equipo
+                    for existing_member in target_team:
+                        if existing_member in constraint_members and existing_member != member_to_add:
+                            print(f"   ⚠️ VIOLACIÓN DifferentTeam: miembro {member_to_add} no puede estar con {existing_member}", file=sys.stderr)
+                            return True
+        return False
+    
+    # Función auxiliar para encontrar un equipo válido para un miembro
+    def find_valid_team_for_member(teams, member, max_team_size):
+        """
+        Encuentra un equipo válido para un miembro respetando restricciones
+        """
+        for team_index, team in enumerate(teams):
+            if len(team) < max_team_size:
+                if not violates_different_team_constraints(teams, member, team_index):
+                    return team_index
+        return -1  # No se encontró equipo válido
+    
+    # Crear equipos respetando SizeCardinality y restricciones
     teams = []
     member_indices = list(range(len(members)))
     available_members = set(member_indices)
     
+    # Obtener configuración de equipos
+    team_size = size_constraints[0]['team_size']
+    min_teams = size_constraints[0]['min']
+    max_teams = size_constraints[0]['max']
+    
+    print(f"🎯 Creando EXACTAMENTE {max_teams} equipos de hasta {team_size} miembros cada uno", file=sys.stderr)
+    
+    # CRÍTICO: Crear exactamente el número de equipos solicitado
+    for i in range(max_teams):
+        teams.append([])
+    print(f"✅ Inicializados {len(teams)} equipos vacíos", file=sys.stderr)
+    
     # Procesar restricciones SameTeam primero
     for i, same_members in enumerate(same_team_constraints):
-        print(f"   🔍 Procesando SameTeam {i}: {same_members} (tipo: {type(same_members)})", file=sys.stderr)
+        print(f"🔍 Procesando SameTeam {i}: {same_members}", file=sys.stderr)
         
         if len(same_members) >= 2:
-            # Convertir a índices si son strings/IDs de MongoDB
             team_indices = []
             for member in same_members:
-                if isinstance(member, (int, float)):
-                    # Ya es un índice
-                    if member in available_members:
-                        team_indices.append(int(member))
-                else:
-                    # Es un ID de MongoDB, ignorar (el worker debería haber mapeado esto)
-                    print(f"   ⚠️ ID de MongoDB encontrado en SameTeam: {member}", file=sys.stderr)
+                if isinstance(member, (int, float)) and member in available_members:
+                    team_indices.append(int(member))
             
             if len(team_indices) >= 2:
-                teams.append(team_indices)
-                for idx in team_indices:
-                    available_members.discard(idx)
-                print(f"   ✅ Equipo SameTeam creado: {team_indices}", file=sys.stderr)
+                # Encontrar el primer equipo con espacio suficiente
+                target_team = -1
+                for team_index, team in enumerate(teams):
+                    if len(team) + len(team_indices) <= team_size:
+                        target_team = team_index
+                        break
+                
+                if target_team >= 0:
+                    teams[target_team].extend(team_indices)
+                    for idx in team_indices:
+                        available_members.discard(idx)
+                    print(f"✅ Equipo SameTeam creado en equipo {target_team + 1}: {team_indices}", file=sys.stderr)
+                else:
+                    print(f"⚠️ No hay espacio para SameTeam de {len(team_indices)} miembros", file=sys.stderr)
+    
+    # Distribuir miembros restantes respetando DifferentTeam
+    remaining_members = list(available_members)
+    current_team_index = 0
+    
+    print(f"📋 Distribuyendo {len(remaining_members)} miembros restantes...", file=sys.stderr)
+    
+    for member in remaining_members:
+        # Encontrar equipo válido para este miembro
+        valid_team = find_valid_team_for_member(teams, member, team_size)
+        
+        if valid_team >= 0:
+            teams[valid_team].append(member)
+            print(f"✅ Miembro {member} asignado al equipo {valid_team + 1}", file=sys.stderr)
+        else:
+            # Si no se encontró equipo válido, asignar al equipo con menos miembros
+            # (esto podría violar restricciones, pero es mejor que dejar al estudiante sin equipo)
+            min_team_index = min(range(len(teams)), key=lambda i: len(teams[i]))
+            if len(teams[min_team_index]) < team_size:
+                teams[min_team_index].append(member)
+                print(f"⚠️ Miembro {member} asignado forzosamente al equipo {min_team_index + 1} (posible violación de restricciones)", file=sys.stderr)
             else:
-                print(f"   ❌ SameTeam sin suficientes miembros válidos: {team_indices}", file=sys.stderr)
-        else:
-            print(f"   ⚠️ SameTeam ignorado - solo tiene {len(same_members)} miembro(s)", file=sys.stderr)
+                # Último recurso: añadir a cualquier equipo (violando tamaño si es necesario)
+                teams[current_team_index % len(teams)].append(member)
+                print(f"🚨 Miembro {member} asignado forzosamente al equipo {(current_team_index % len(teams)) + 1} (violando tamaño)", file=sys.stderr)
+                current_team_index += 1
     
-    # Crear equipos según SizeCardinality
-    for size_config in size_constraints:
-        team_size = size_config['team_size']
-        min_teams = size_config['min']
-        max_teams = size_config['max']
-        
-        print(f"   🔧 Creando {min_teams}-{max_teams} equipos de {team_size} miembros", file=sys.stderr)
-        
-        teams_created = 0
-        remaining_members = list(available_members)
-        
-        while teams_created < max_teams and len(remaining_members) >= team_size:
-            team = remaining_members[:team_size]
-            teams.append(team)
-            teams_created += 1
-            
-            for idx in team:
-                available_members.discard(idx)
-                remaining_members.remove(idx)
-            
-            print(f"   ✅ Equipo {len(teams)} creado: {team}", file=sys.stderr)
+    # Balancear equipos si es necesario
+    total_members = sum(len(team) for team in teams)
+    target_size_per_team = total_members // len(teams)
     
-    # Asignar miembros restantes si los hay
-    if available_members:
-        remaining = list(available_members)
-        if teams:
-            # Distribuir en equipos existentes
-            for i, member in enumerate(remaining):
-                team_index = i % len(teams)
-                teams[team_index].append(member)
-                print(f"   ➕ Miembro {member} añadido al equipo {team_index + 1}", file=sys.stderr)
-        else:
-            # Crear un último equipo con los restantes
-            teams.append(remaining)
-            print(f"   ✅ Equipo final creado con miembros restantes: {remaining}", file=sys.stderr)
+    print(f"⚖️ Balanceando equipos: {total_members} miembros en {len(teams)} equipos (objetivo: ~{target_size_per_team} por equipo)", file=sys.stderr)
     
-    print(f"🎉 Algoritmo de respaldo completado: {len(teams)} equipos", file=sys.stderr)
+    # Remover equipos completamente vacíos si los hay (aunque esto no debería pasar)
+    teams = [team for team in teams if len(team) > 0]
+    
+    # Validar restricciones DifferentTeam finales
+    violations = 0
+    for constraint in different_team_constraints:
+        if len(constraint) >= 2:
+            constraint_members = [int(m) for m in constraint if isinstance(m, (int, float))]
+            for team_index, team in enumerate(teams):
+                members_in_team = [m for m in constraint_members if m in team]
+                if len(members_in_team) > 1:
+                    violations += 1
+                    print(f"🚨 VIOLACIÓN en equipo {team_index + 1}: miembros {members_in_team} deben estar separados", file=sys.stderr)
+    
+    print(f"🎉 Algoritmo de respaldo completado:", file=sys.stderr)
+    print(f"   📊 {len(teams)} equipos creados", file=sys.stderr)
+    print(f"   👥 {sum(len(team) for team in teams)} estudiantes asignados", file=sys.stderr)
+    print(f"   🚨 {violations} violaciones de restricciones DifferentTeam", file=sys.stderr)
+    
     return teams
 
 def main():

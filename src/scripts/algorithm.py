@@ -230,8 +230,61 @@ def fallback_algorithm(data):
     
     print(f"⚖️ Balanceando equipos: {total_members} miembros en {len(teams)} equipos (objetivo: ~{target_size_per_team} por equipo)", file=sys.stderr)
     
-    # Remover equipos completamente vacíos si los hay (aunque esto no debería pasar)
-    teams = [team for team in teams if len(team) > 0]
+    # CRÍTICO: NO remover equipos vacíos - el profesor solicitó un número específico de equipos
+    # Mantener exactamente el número de equipos solicitado (max_teams)
+    empty_teams = [i for i, team in enumerate(teams) if len(team) == 0]
+    if empty_teams:
+        print(f"⚠️ Equipos vacíos encontrados: {[i+1 for i in empty_teams]}", file=sys.stderr)
+        print(f"🎯 Manteniendo {len(teams)} equipos como solicitó el profesor (incluyendo vacíos)", file=sys.stderr)
+        
+        # Si hay equipos vacíos y estudiantes en equipos grandes, redistribuir
+        if len(empty_teams) > 0:
+            # Encontrar equipos con más miembros que el promedio
+            avg_size = total_members / len(teams)
+            large_teams = [(i, team) for i, team in enumerate(teams) if len(team) > avg_size + 1]
+            
+            if large_teams:
+                print(f"📋 Redistribuyendo estudiantes de equipos grandes a equipos vacíos...", file=sys.stderr)
+                
+                for empty_team_idx in empty_teams:
+                    if large_teams:
+                        # Tomar el primer equipo grande disponible
+                        large_team_idx, large_team = large_teams[0]
+                        if len(large_team) > 1:  # Solo mover si el equipo grande tiene más de 1 miembro
+                            # Mover el último miembro del equipo grande al equipo vacío
+                            member_to_move = large_team.pop()
+                            teams[empty_team_idx].append(member_to_move)
+                            print(f"🔄 Miembro {member_to_move} movido del equipo {large_team_idx + 1} al equipo {empty_team_idx + 1}", file=sys.stderr)
+                            
+                            # Actualizar la lista de equipos grandes si este ya no es grande
+                            if len(large_team) <= avg_size + 1:
+                                large_teams.pop(0)
+    else:
+        print(f"✅ Todos los {len(teams)} equipos tienen al menos un miembro", file=sys.stderr)
+    
+    # Validación final: verificar que NO se han perdido estudiantes
+    total_assigned = sum(len(team) for team in teams)
+    total_students = len(members)
+    
+    if total_assigned != total_students:
+        print(f"🚨 ERROR CRÍTICO: {total_students - total_assigned} estudiantes perdidos en el proceso!", file=sys.stderr)
+        print(f"   👥 Estudiantes totales: {total_students}", file=sys.stderr)
+        print(f"   📊 Estudiantes asignados: {total_assigned}", file=sys.stderr)
+        
+        # Buscar estudiantes perdidos y asignarlos
+        all_assigned_members = set()
+        for team in teams:
+            all_assigned_members.update(team)
+        
+        missing_members = [i for i in range(total_students) if i not in all_assigned_members]
+        
+        if missing_members:
+            print(f"🔍 Estudiantes perdidos encontrados: {missing_members}", file=sys.stderr)
+            for missing_member in missing_members:
+                # Asignar al equipo con menos miembros
+                min_team_idx = min(range(len(teams)), key=lambda i: len(teams[i]))
+                teams[min_team_idx].append(missing_member)
+                print(f"🆘 Estudiante perdido {missing_member} asignado al equipo {min_team_idx + 1}", file=sys.stderr)
     
     # Validar restricciones DifferentTeam finales
     violations = 0

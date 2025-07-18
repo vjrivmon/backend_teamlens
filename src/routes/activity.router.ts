@@ -669,12 +669,62 @@ activitiesRouter.post("/:id/algorithm/execute", verifyTeacher, async (req: Reque
         console.log(`📊 [AlgorithmExecute] - Members con traits: ${processedAlgorithmData.members.length}`);
         console.log(`📊 [AlgorithmExecute] - Traits sample: ${processedAlgorithmData.members.slice(0, 3).map((m: any) => m.traits.join(',')).join(' | ')}`);
 
+        // CRÍTICO: Procesar groupConfigurations del frontend para crear constraints SizeCardinality correctas
+        if (groupConfigurations && groupConfigurations.length > 0) {
+            console.log(`🔧 [AlgorithmExecute] Procesando ${groupConfigurations.length} configuraciones de grupos del frontend...`);
+            
+            // Remover constraints SizeCardinality existentes que puedan estar mal configuradas
+            processedAlgorithmData.constraints = processedAlgorithmData.constraints.filter(
+                (constraint: any) => constraint.type !== 'SizeCardinality'
+            );
+            
+            console.log(`🧹 [AlgorithmExecute] Constraints SizeCardinality previas removidas`);
+            
+            // Convertir cada groupConfiguration en constraint SizeCardinality
+            groupConfigurations.forEach((config: any, index: number) => {
+                const sizeConstraint = {
+                    type: "SizeCardinality",
+                    name: `frontend_config_${index}`,
+                    team_size: config.size,
+                    min: config.minQuantity,
+                    max: config.maxQuantity
+                };
+                
+                processedAlgorithmData.constraints.push(sizeConstraint);
+                
+                console.log(`✅ [AlgorithmExecute] Añadida constraint SizeCardinality ${index + 1}:`, {
+                    team_size: config.size,
+                    min: config.minQuantity,
+                    max: config.maxQuantity,
+                    descripcion: `${config.minQuantity}-${config.maxQuantity} grupos de ${config.size} estudiantes`
+                });
+            });
+            
+            // Calcular totales para validación
+            const totalMinGroups = groupConfigurations.reduce((sum: number, config: any) => sum + config.minQuantity, 0);
+            const totalMaxGroups = groupConfigurations.reduce((sum: number, config: any) => sum + config.maxQuantity, 0);
+            const totalMinStudents = groupConfigurations.reduce((sum: number, config: any) => sum + (config.minQuantity * config.size), 0);
+            const totalMaxStudents = groupConfigurations.reduce((sum: number, config: any) => sum + (config.maxQuantity * config.size), 0);
+            
+            console.log(`📊 [AlgorithmExecute] Resumen de configuración de grupos:`);
+            console.log(`   📈 Grupos totales: ${totalMinGroups}-${totalMaxGroups}`);
+            console.log(`   👥 Estudiantes necesarios: ${totalMinStudents}-${totalMaxStudents}`);
+            console.log(`   🎯 Estudiantes disponibles: ${processedAlgorithmData.number_members}`);
+            
+            if (totalMinStudents > processedAlgorithmData.number_members) {
+                console.log(`⚠️ [AlgorithmExecute] ADVERTENCIA: Configuración requiere mínimo ${totalMinStudents} estudiantes pero solo hay ${processedAlgorithmData.number_members}`);
+            }
+            
+        } else {
+            console.log(`📋 [AlgorithmExecute] No hay configuraciones específicas del frontend - usando constraints por defecto`);
+        }
+
         // Paso 5: Procesar restricciones del frontend
         console.log(`🔍 [AlgorithmExecute] Paso 5: Procesando restricciones del frontend...`);
         
         console.log(`🔍 [AlgorithmExecute] DEBUG - Mapeo de estudiantes a índices:`);
         Array.from(studentIdToIndex.entries()).forEach(([id, index]) => {
-            const student = studentsWithBelbin.find(s => s._id.toString() === id);
+            const student = allSelectedStudents?.find(s => s._id.toString() === id);
             console.log(`   Índice ${index}: ${student?.email} (ID: ${id})`);
         });
         

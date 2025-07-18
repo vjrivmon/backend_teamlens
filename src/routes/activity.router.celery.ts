@@ -190,6 +190,56 @@ activitiesCeleryRouter.post("/:id/algorithm/execute-celery", verifyTeacher, asyn
             number_members: membersWithTraits.length
         };
 
+        // CRÍTICO: Procesar groupConfigurations del frontend para crear constraints SizeCardinality correctas
+        if (groupConfigurations && groupConfigurations.length > 0) {
+            logger.info(`🔧 [CELERY-ALGORITHM] Procesando ${groupConfigurations.length} configuraciones de grupos del frontend...`);
+            
+            // Remover constraints SizeCardinality existentes que puedan estar mal configuradas
+            processedAlgorithmData.constraints = processedAlgorithmData.constraints.filter(
+                (constraint: any) => constraint.type !== 'SizeCardinality'
+            );
+            
+            logger.info(`🧹 [CELERY-ALGORITHM] Constraints SizeCardinality previas removidas`);
+            
+            // Convertir cada groupConfiguration en constraint SizeCardinality
+            groupConfigurations.forEach((config: any, index: number) => {
+                const sizeConstraint = {
+                    type: "SizeCardinality",
+                    name: `celery_frontend_config_${index}`,
+                    team_size: config.size,
+                    min: config.minQuantity,
+                    max: config.maxQuantity
+                };
+                
+                processedAlgorithmData.constraints.push(sizeConstraint);
+                
+                logger.info(`✅ [CELERY-ALGORITHM] Añadida constraint SizeCardinality ${index + 1}:`, {
+                    team_size: config.size,
+                    min: config.minQuantity,
+                    max: config.maxQuantity,
+                    descripcion: `${config.minQuantity}-${config.maxQuantity} grupos de ${config.size} estudiantes`
+                });
+            });
+            
+            // Calcular totales para validación
+            const totalMinGroups = groupConfigurations.reduce((sum: number, config: any) => sum + config.minQuantity, 0);
+            const totalMaxGroups = groupConfigurations.reduce((sum: number, config: any) => sum + config.maxQuantity, 0);
+            const totalMinStudents = groupConfigurations.reduce((sum: number, config: any) => sum + (config.minQuantity * config.size), 0);
+            const totalMaxStudents = groupConfigurations.reduce((sum: number, config: any) => sum + (config.maxQuantity * config.size), 0);
+            
+            logger.info(`📊 [CELERY-ALGORITHM] Resumen de configuración de grupos:`);
+            logger.info(`   📈 Grupos totales: ${totalMinGroups}-${totalMaxGroups}`);
+            logger.info(`   👥 Estudiantes necesarios: ${totalMinStudents}-${totalMaxStudents}`);
+            logger.info(`   🎯 Estudiantes disponibles: ${processedAlgorithmData.number_members}`);
+            
+            if (totalMinStudents > processedAlgorithmData.number_members) {
+                logger.warn(`⚠️ [CELERY-ALGORITHM] ADVERTENCIA: Configuración requiere mínimo ${totalMinStudents} estudiantes pero solo hay ${processedAlgorithmData.number_members}`);
+            }
+            
+        } else {
+            logger.info(`📋 [CELERY-ALGORITHM] No hay configuraciones específicas del frontend - usando constraints por defecto`);
+        }
+
         // === FASE 6: PROCESAMIENTO DE RESTRICCIONES ===
         logger.info(`🔍 [CELERY-ALGORITHM] Fase 6: Procesando restricciones del frontend...`);
         

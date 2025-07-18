@@ -170,6 +170,7 @@ questionnairesRouter.put("/:id/submit-anonymous", async (req: Request, res: Resp
             const tempUser = {
                 email: email,
                 name: email.split('@')[0], // Usar parte del email como nombre temporal
+                gender: "prefer_not_to_say", // Valor por defecto para usuarios temporales/anónimos
                 password: "ANONYMOUS_USER_NO_PASSWORD", // Password temporal para usuarios anónimos
                 role: "student",
                 askedQuestionnaires: [],

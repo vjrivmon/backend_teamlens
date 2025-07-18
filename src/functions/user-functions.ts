@@ -51,6 +51,7 @@ export const createNonRegisteredAccount = async (email: string): Promise<ObjectI
         const newUser: any = {
             email: email,
             name: name,
+            gender: "prefer_not_to_say", // Valor por defecto para usuarios con invitación
             password: hashedPassword,
             role: "student",
             invitationToken: invitationToken,

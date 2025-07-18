@@ -30,9 +30,16 @@ export const deleteGroup = async (groupId: string) => {
 
 }
 
-export const createGroup = async (activityId: string, groupData: Group) => {
+export const createGroup = async (
+    activityId: string, 
+    groupData: Group, 
+    options: { sendNotifications?: boolean; teacherId?: string } = {}
+) => {
+    const { sendNotifications = true, teacherId } = options;
+    
     console.log(`🏗️ [CreateGroup] Iniciando creación de grupo: ${groupData.name} para actividad: ${activityId}`);
     console.log(`👥 [CreateGroup] Estudiantes a agregar: ${groupData.students.length}`);
+    console.log(`📋 [CreateGroup] Estado: ${groupData.status}, Notificaciones: ${sendNotifications}`);
 
     //session.startTransaction();
     // {session: session} -> MongoError: Transaction numbers are only allowed on a replica set member or mongos.
@@ -141,15 +148,22 @@ export const createGroup = async (activityId: string, groupData: Group) => {
         throw new Error("Failed to add group to activity");
     }
 
-    // send notification to users added to the group
-    console.log(`📨 [CreateGroup] Enviando notificaciones...`);
-    belongUsersIds.forEach(async (id) => {
-        await addUserNotification(id, {
-            title: "Group",
-            description: `You have been added to a new group!`,
-            link: `/activities/${activityId}/${resultInsert?.insertedId}`
-        })
-    });
+    // ✅ CORREGIDO: Solo enviar notificaciones si el grupo está confirmado o se especifica explícitamente
+    const shouldNotify = sendNotifications && (groupData.status === 'confirmed' || groupData.status === undefined);
+    
+    if (shouldNotify) {
+        console.log(`📨 [CreateGroup] Enviando notificaciones a ${belongUsersIds.length} estudiantes...`);
+        belongUsersIds.forEach(async (id) => {
+            await addUserNotification(id, {
+                title: "Group",
+                description: `You have been added to a new group!`,
+                link: `/activities/${activityId}/${resultInsert?.insertedId}`
+            });
+        });
+        console.log(`✅ [CreateGroup] Notificaciones enviadas exitosamente`);
+    } else {
+        console.log(`⏭️ [CreateGroup] Grupo creado en modo '${groupData.status}' - notificaciones omitidas`);
+    }
 
     //await session.commitTransaction();
     if (resultInsert && resultInsert.insertedId) {
@@ -162,6 +176,116 @@ export const createGroup = async (activityId: string, groupData: Group) => {
         throw new Error("Failed to create a new group.");
     }
 }
+
+/**
+ * 🚀 NUEVA FUNCIÓN: Confirmar grupos en lote y enviar notificaciones
+ * Esta función se ejecuta cuando el profesor aprueba los grupos del algoritmo
+ */
+export const confirmGroupsAndNotify = async (
+    activityId: string, 
+    teacherId: string,
+    groupIds?: ObjectId[]
+): Promise<{ confirmedCount: number; notifiedStudents: number }> => {
+    console.log(`✅ [ConfirmGroups] Iniciando confirmación de grupos para actividad: ${activityId}`);
+    console.log(`👨‍🏫 [ConfirmGroups] Profesor confirmando: ${teacherId}`);
+
+    try {
+        // 1. Buscar grupos a confirmar (todos los draft de la actividad o los especificados)
+        const filter: any = {
+            activity: new ObjectId(activityId),
+            status: 'draft'
+        };
+        
+        if (groupIds && groupIds.length > 0) {
+            filter._id = { $in: groupIds };
+        }
+
+        const draftGroups = await collections.groups?.find(filter).toArray();
+        
+        if (!draftGroups || draftGroups.length === 0) {
+            console.log(`ℹ️ [ConfirmGroups] No hay grupos draft para confirmar`);
+            return { confirmedCount: 0, notifiedStudents: 0 };
+        }
+
+        console.log(`📋 [ConfirmGroups] Grupos a confirmar: ${draftGroups.length}`);
+
+        // 2. Actualizar estado de todos los grupos a 'confirmed'
+        const updateResult = await collections.groups?.updateMany(filter, {
+            $set: {
+                status: 'confirmed',
+                confirmedAt: new Date(),
+                confirmedBy: new ObjectId(teacherId)
+            }
+        });
+
+        console.log(`✅ [ConfirmGroups] Grupos actualizados: ${updateResult?.modifiedCount}`);
+
+        // 3. Recopilar todos los estudiantes únicos de todos los grupos
+        const allStudentIds = new Set<string>();
+        draftGroups.forEach(group => {
+            group.students.forEach(studentId => {
+                allStudentIds.add(studentId.toString());
+            });
+        });
+
+        console.log(`👥 [ConfirmGroups] Estudiantes únicos a notificar: ${allStudentIds.size}`);
+
+        // 4. Obtener información de la actividad para la notificación
+        const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
+        
+        if (!activity) {
+            throw new Error(`Actividad no encontrada: ${activityId}`);
+        }
+
+        // 5. Enviar notificaciones a todos los estudiantes
+        console.log(`📨 [ConfirmGroups] Enviando notificaciones...`);
+        
+        const notificationPromises = Array.from(allStudentIds).map(async (studentId) => {
+            try {
+                await addUserNotification(new ObjectId(studentId), {
+                    title: "🎉 ¡Grupos Confirmados!",
+                    description: `Los grupos para "${activity.title}" han sido confirmados. ¡Ve a ver tu equipo!`,
+                    link: `/activities/${activityId}`
+                });
+                return true;
+            } catch (error) {
+                console.error(`❌ [ConfirmGroups] Error notificando estudiante ${studentId}:`, error);
+                return false;
+            }
+        });
+
+        const notificationResults = await Promise.all(notificationPromises);
+        const successfulNotifications = notificationResults.filter(result => result).length;
+
+        console.log(`✅ [ConfirmGroups] Notificaciones enviadas: ${successfulNotifications}/${allStudentIds.size}`);
+
+        // 6. Notificar al profesor sobre el éxito
+        await addUserNotification(new ObjectId(teacherId), {
+            title: "✅ Grupos Confirmados Exitosamente",
+            description: `Se confirmaron ${updateResult?.modifiedCount} grupos y se notificó a ${successfulNotifications} estudiantes.`,
+            link: `/activities/${activityId}`
+        });
+
+        console.log(`🎉 [ConfirmGroups] Proceso completado exitosamente`);
+
+        return {
+            confirmedCount: updateResult?.modifiedCount || 0,
+            notifiedStudents: successfulNotifications
+        };
+
+    } catch (error: any) {
+        console.error(`💥 [ConfirmGroups] Error confirmando grupos:`, error);
+        
+        // Notificar error al profesor
+        await addUserNotification(new ObjectId(teacherId), {
+            title: "❌ Error Confirmando Grupos",
+            description: `Hubo un problema confirmando los grupos: ${error.message}`,
+            link: `/activities/${activityId}`
+        });
+
+        throw error;
+    }
+};
 
 
 export const getGroupsWithStudents = async (groupsId: ObjectId[]) => {

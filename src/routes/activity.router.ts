@@ -7,7 +7,7 @@ import Activity, { AlgorithmConfig } from "../models/activity";
 
 import { groupsRouter } from "./groups.router";
 import { handleActivityStudentsRouter } from "./handle-activity-students.router";
-import { createGroup, deleteGroup } from "../functions/group-functions";
+import { createGroup, deleteGroup, confirmGroupsAndNotify } from "../functions/group-functions";
 import { verifyTeacher } from "../middlewares";
 
 import { Worker } from 'worker_threads';
@@ -974,18 +974,29 @@ const startAlgorithmWorker = (workerData: any) => {
                 const teams = workerResult.teams;
                 console.log(`👥 [AlgorithmWorker] Creando ${teams.length} grupos para actividad: ${activityId}`);
 
-                // Crear grupos basados en los resultados del algoritmo
+                                // ✅ CORREGIDO: Crear grupos en estado 'draft' sin notificar automáticamente
                 const groupCreationPromises = teams.map(async (team: any, index: number) => {
                     try {
                         const groupName = `Equipo ${index + 1}`;
-                        console.log(`🏗️ [AlgorithmWorker] Creando grupo: ${groupName} con ${team.length} estudiantes`);
+                        console.log(`🏗️ [AlgorithmWorker] Creando grupo DRAFT: ${groupName} con ${team.length} estudiantes`);
                         
-                    await createGroup(activityId, {
+                        await createGroup(activityId, {
                             name: groupName,
-                        students: team
-                    } as Group);
+                            students: team,
+                            activity: new ObjectId(activityId),
+                            status: 'draft', // ✅ Estado draft - pendiente de confirmación
+                            creationMethod: 'algorithm', // ✅ Creado por algoritmo
+                            createdAt: new Date(),
+                            metadata: {
+                                algorithmVersion: '2.0',
+                                teamSize: team.length,
+                                creation_method: 'algorithm_worker'
+                            }
+                        } as any, { 
+                            sendNotifications: false // ✅ NO enviar notificaciones aún
+                        });
                         
-                        console.log(`✅ [AlgorithmWorker] Grupo creado: ${groupName}`);
+                        console.log(`✅ [AlgorithmWorker] Grupo DRAFT creado: ${groupName}`);
                     } catch (groupError: any) {
                         console.error(`💥 [AlgorithmWorker] Error creando grupo ${index + 1}:`, groupError);
                     }
@@ -1118,18 +1129,29 @@ const startAlgorithmWorkerWithCallback = (workerData: any, resolve: (value: any)
                 const teams = workerResult.teams;
                 console.log(`👥 [AlgorithmWorkerCallback] Creando ${teams.length} grupos para actividad: ${activityId}`);
 
-                // Crear grupos basados en los resultados del algoritmo
+                // ✅ CORREGIDO: Crear grupos en estado 'draft' sin notificar automáticamente
                 const groupCreationPromises = teams.map(async (team: any, index: number) => {
                     try {
                         const groupName = `Equipo ${index + 1}`;
-                        console.log(`🏗️ [AlgorithmWorkerCallback] Creando grupo: ${groupName} con ${team.length} estudiantes`);
+                        console.log(`🏗️ [AlgorithmWorkerCallback] Creando grupo DRAFT: ${groupName} con ${team.length} estudiantes`);
                         
                         await createGroup(activityId, {
                             name: groupName,
-                            students: team
-                        } as Group);
+                            students: team,
+                            activity: new ObjectId(activityId),
+                            status: 'draft', // ✅ Estado draft - pendiente de confirmación
+                            creationMethod: 'algorithm', // ✅ Creado por algoritmo
+                            createdAt: new Date(),
+                            metadata: {
+                                algorithmVersion: '2.0_callback',
+                                teamSize: team.length,
+                                creation_method: 'algorithm_worker_callback'
+                            }
+                        } as any, { 
+                            sendNotifications: false // ✅ NO enviar notificaciones aún
+                        });
                         
-                        console.log(`✅ [AlgorithmWorkerCallback] Grupo creado: ${groupName}`);
+                        console.log(`✅ [AlgorithmWorkerCallback] Grupo DRAFT creado: ${groupName}`);
                     } catch (groupError: any) {
                         console.error(`💥 [AlgorithmWorkerCallback] Error creando grupo ${index + 1}:`, groupError);
                     }
@@ -1141,10 +1163,10 @@ const startAlgorithmWorkerWithCallback = (workerData: any, resolve: (value: any)
                 // Obtener información de la actividad para notificación
                 const activity = await collections.activities?.findOne({ _id: new ObjectId(activityId) });
 
-                // Enviar notificación de finalización exitosa
+                // ✅ CORREGIDO: Notificar al profesor que debe revisar y confirmar los grupos
                 await addUserNotification(new ObjectId(activity?.teacher), {
-                    title: '🎉 Algoritmo de formación completado',
-                    description: `El algoritmo ha creado ${teams.length} equipos exitosamente para la actividad "${activity?.title}". ¡Revisa los resultados!`,
+                    title: '📋 Grupos Listos para Revisión',
+                    description: `El algoritmo ha creado ${teams.length} grupos para "${activity?.title}". Revisa y confirma los grupos para notificar a los estudiantes.`,
                     link: `/activities/${activityId}`
                 });
 
@@ -2735,6 +2757,70 @@ activitiesRouter.post("/:id/refresh-belbin-status", async (req: Request, res: Re
             error: error.message,
             activityId
         });
+    }
+});
+
+/**
+ * 🚀 NUEVA RUTA: Confirmar grupos en lote y enviar notificaciones
+ * POST /api/activities/:id/groups/confirm
+ * Esta ruta se ejecuta cuando el profesor aprueba los grupos del algoritmo
+ */
+activitiesRouter.post("/:id/groups/confirm", verifyTeacher, async (req: Request, res: Response) => {
+    const activityId = req.params.id;
+    const teacherId = req.session?.authuser as string;
+    const { groupIds } = req.body; // Opcional: IDs específicos de grupos a confirmar
+
+    console.log(`✅ [ConfirmGroupsAPI] Solicitud de confirmación de grupos:`);
+    console.log(`   📋 Actividad: ${activityId}`);
+    console.log(`   👨‍🏫 Profesor: ${teacherId}`);
+    console.log(`   🎯 Grupos específicos: ${groupIds ? groupIds.length : 'todos los draft'}`);
+
+    try {
+        // Verificar que la actividad existe y el profesor tiene permisos
+        const activity = await collections.activities?.findOne({ 
+            _id: new ObjectId(activityId),
+            teacher: new ObjectId(teacherId)
+        });
+
+        if (!activity) {
+            console.error(`❌ [ConfirmGroupsAPI] Actividad no encontrada o sin permisos: ${activityId}`);
+            res.status(404).json({
+                success: false,
+                message: "Actividad no encontrada o sin permisos"
+            });
+            return;
+        }
+
+        // Convertir groupIds si se proporcionaron
+        const groupObjectIds = groupIds ? groupIds.map((id: string) => new ObjectId(id)) : undefined;
+
+        // Ejecutar la confirmación de grupos
+        const result = await confirmGroupsAndNotify(activityId, teacherId, groupObjectIds);
+
+        console.log(`🎉 [ConfirmGroupsAPI] Confirmación exitosa:`, result);
+
+        // Responder con éxito
+        res.status(200).json({
+            success: true,
+            message: "Grupos confirmados exitosamente",
+            data: {
+                confirmedCount: result.confirmedCount,
+                notifiedStudents: result.notifiedStudents,
+                activityId: activityId,
+                timestamp: new Date().toISOString()
+            }
+        });
+        return;
+
+    } catch (error: any) {
+        console.error(`💥 [ConfirmGroupsAPI] Error confirmando grupos:`, error);
+
+        res.status(500).json({
+            success: false,
+            message: "Error interno confirmando grupos",
+            error: error.message
+        });
+        return;
     }
 });
 

@@ -8,6 +8,7 @@ export default class User {
     constructor(
         public email: string,
         public name: string,
+        public gender: string,              // Nuevo campo: sexo del usuario
         public password: string,
         public role: string,
         public askedQuestionnaires?: AskedQuestionnaire[],

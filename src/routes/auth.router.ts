@@ -120,7 +120,7 @@ authRouter.post("/register-student", async (req: Request, res: Response) => {
         await collections.users?.updateOne({ email: newUser.email },
             {
                 $unset: { invitationToken: 1 },
-                $set: { name: newUser.name, role: 'student', password: newUser.password }
+                $set: { name: newUser.name, gender: newUser.gender, role: 'student', password: newUser.password }
             });
 
 

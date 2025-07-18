@@ -444,4 +444,31 @@ activitiesCeleryRouter.get("/:id/algorithm/status/:taskId", verifyTeacher, async
         });
 
     } catch (error: any) {
-        logger.error(`
+        logger.error(`💥 [CELERY-STATUS] Error obteniendo estado de tarea:`, error);
+        return res.status(500).json({
+            success: false,
+            error: 'INTERNAL_SERVER_ERROR',
+            message: 'Failed to get task status',
+            details: error.message
+        });
+    }
+});
+
+// ============================================================================
+// FUNCIONES AUXILIARES
+// ============================================================================
+
+/**
+ * Estima el tiempo de ejecución basado en el número de estudiantes
+ * @param studentCount Número de estudiantes
+ * @returns Tiempo estimado en minutos
+ */
+const estimateExecutionTime = (studentCount: number): number => {
+    if (studentCount <= 10) return 1;
+    if (studentCount <= 20) return 2;
+    if (studentCount <= 30) return 3;
+    if (studentCount <= 50) return 5;
+    return Math.ceil(studentCount / 10);
+};
+
+export default activitiesCeleryRouter;

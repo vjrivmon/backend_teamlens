@@ -18,14 +18,14 @@ def execute_real_algorithm(data):
         
         print(f"📁 Ruta pyteamformation: {pyteamformation_path}", file=sys.stderr)
         
-        # Importar el algoritmo real
+        # Importar el algoritmo real - CAMBIADO: usar TraitTeamFormationProblem más genérico
         from pyteamformation.algorithm.algorithm import Algorithm
-        from pyteamformation.problem.belbin_aranzabal import AranzabalBelbinProblem
+        from pyteamformation.problem.trait_team_formation_problem import TraitTeamFormationProblem
         
         print("✅ Algoritmo real importado correctamente", file=sys.stderr)
         
-        # Crear el problema
-        problem = AranzabalBelbinProblem.from_json_object(data)
+        # Crear el problema usando TraitTeamFormationProblem que es más flexible
+        problem = TraitTeamFormationProblem.from_json_object(data)
         print(f"✅ Problema creado con {problem.number_members} miembros", file=sys.stderr)
         
         # Mostrar información detallada de constraints

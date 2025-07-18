@@ -18,8 +18,8 @@ def execute_real_algorithm(data):
         
         print(f"📁 Ruta pyteamformation: {pyteamformation_path}", file=sys.stderr)
         
-        # Importar el algoritmo real - CAMBIADO: usar TraitTeamFormationProblem más genérico
-        from pyteamformation.algorithm.algorithm import Algorithm
+        # Importar algoritmo concreto - CORREGIDO: usar implementación específica
+        from pyteamformation.algorithm.metaheuristic.candel_ga import OrderBasedBitKeyGA
         from pyteamformation.problem.trait_team_formation_problem import TraitTeamFormationProblem
         
         print("✅ Algoritmo real importado correctamente", file=sys.stderr)
@@ -33,14 +33,14 @@ def execute_real_algorithm(data):
         for i, constraint in enumerate(problem._constraints):
             print(f"   {i}: {constraint.type} - {getattr(constraint, 'name', 'sin nombre')} - members: {getattr(constraint, 'members', 'N/A')}", file=sys.stderr)
         
-        # Crear y ejecutar el algoritmo
+        # CORREGIDO: Usar algoritmo concreto directamente
         print("🚀 Iniciando algoritmo de optimización...", file=sys.stderr)
         start_time = time.time()
         
-        # Usar algoritmo genético (más robusto)
-        algorithm = Algorithm(problem, "CANDEL_GA")
+        # Instanciar algoritmo genético directamente
+        algorithm = OrderBasedBitKeyGA(problem)
         
-        print(f"⚙️ Configurando algoritmo: {algorithm._algorithm_name}", file=sys.stderr)
+        print(f"⚙️ Configurando algoritmo: OrderBasedBitKeyGA", file=sys.stderr)
         
         # Configurar parámetros para un tiempo real de ejecución
         algorithm.set_parameters({

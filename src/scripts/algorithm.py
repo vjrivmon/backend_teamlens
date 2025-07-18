@@ -18,20 +18,33 @@ def execute_real_algorithm(data):
         
         print(f"📁 Ruta pyteamformation: {pyteamformation_path}", file=sys.stderr)
         
+        # 🔍 DEBUGGING: Mostrar datos antes de enviar al algoritmo
+        print("🔍 DEBUGGING - Datos que se envían a TraitTeamFormationProblem:", file=sys.stderr)
+        print(f"   - Tipo de data: {type(data)}", file=sys.stderr)
+        print(f"   - Keys en data: {list(data.keys()) if isinstance(data, dict) else 'No es dict'}", file=sys.stderr)
+        
         # Importar algoritmo concreto - CORREGIDO: usar implementación específica
         from pyteamformation.algorithm.metaheuristic.candel_ga import OrderBasedBitKeyGA
         from pyteamformation.problem.trait_team_formation_problem import TraitTeamFormationProblem
         
         print("✅ Algoritmo real importado correctamente", file=sys.stderr)
         
-        # Crear el problema usando TraitTeamFormationProblem que es más flexible
-        problem = TraitTeamFormationProblem.from_json_object(data)
-        print(f"✅ Problema creado con {problem.number_members} miembros", file=sys.stderr)
+        # 🔍 DEBUGGING: Intentar crear el problema con logging detallado
+        print("🔍 DEBUGGING - Intentando crear TraitTeamFormationProblem...", file=sys.stderr)
+        try:
+            # Crear el problema usando TraitTeamFormationProblem que es más flexible
+            problem = TraitTeamFormationProblem.from_json_object(data)
+            print(f"✅ Problema creado con {problem.number_members} miembros", file=sys.stderr)
+        except Exception as problem_error:
+            print(f"❌ Error creando problema: {problem_error}", file=sys.stderr)
+            print(f"🔍 Tipo de error: {type(problem_error)}", file=sys.stderr)
+            raise problem_error
         
         # Mostrar información detallada de constraints
         print(f"📋 Constraints del problema:", file=sys.stderr)
         for i, constraint in enumerate(problem._constraints):
-            print(f"   {i}: {constraint.type} - {getattr(constraint, 'name', 'sin nombre')} - members: {getattr(constraint, 'members', 'N/A')}", file=sys.stderr)
+            constraint_info = f"   {i}: {constraint.type} - {getattr(constraint, 'name', 'sin nombre')} - members: {getattr(constraint, 'members', 'N/A')}"
+            print(constraint_info, file=sys.stderr)
         
         # CORREGIDO: Usar algoritmo concreto directamente
         print("🚀 Iniciando algoritmo de optimización...", file=sys.stderr)
@@ -90,24 +103,42 @@ def main():
     data_str = sys.argv[1]
     print(f"📋 Datos recibidos: {len(data_str)} caracteres", file=sys.stderr)
     
+    # 🔍 DEBUGGING: Imprimir los datos completos para diagnóstico
+    print("🔍 DEBUGGING - Datos JSON completos recibidos:", file=sys.stderr)
+    print(data_str, file=sys.stderr)
+    print("🔍 DEBUGGING - Fin de datos JSON", file=sys.stderr)
+    
     try:
-        json_data = json.loads(data_str)
-        print(f"✅ JSON parseado correctamente", file=sys.stderr)
+        data = json.loads(data_str)
+        print("✅ JSON parseado correctamente", file=sys.stderr)
         
+        # 🔍 DEBUGGING: Mostrar estructura de datos detallada
+        print(f"🔍 DEBUGGING - Estructura de datos:", file=sys.stderr)
+        print(f"   - members: {len(data.get('members', []))}", file=sys.stderr)
+        print(f"   - constraints: {len(data.get('constraints', []))}", file=sys.stderr)
+        print(f"   - team_size: {data.get('team_size', 'undefined')}", file=sys.stderr)
+        
+        # Mostrar cada miembro en detalle
+        for i, member in enumerate(data.get('members', [])[:3]):  # Solo primeros 3 para no saturar logs
+            print(f"   - member[{i}]: {member}", file=sys.stderr)
+        
+        if len(data.get('members', [])) > 3:
+            print(f"   - ... y {len(data.get('members', [])) - 3} miembros más", file=sys.stderr)
+    
         # Validar estructura básica
-        if 'members' not in json_data:
+        if 'members' not in data:
             print("❌ Error: No se encontró 'members' en los datos", file=sys.stderr)
             return 1
             
-        if not json_data['members']:
+        if not data['members']:
             print("❌ Error: Lista de miembros está vacía", file=sys.stderr)
             return 1
             
-        print(f"👥 Procesando {len(json_data['members'])} miembros", file=sys.stderr)
-        print(f"🔧 Constraints: {len(json_data.get('constraints', []))}", file=sys.stderr)
+        print(f"👥 Procesando {len(data['members'])} miembros", file=sys.stderr)
+        print(f"🔧 Constraints: {len(data.get('constraints', []))}", file=sys.stderr)
         
         # Ejecutar algoritmo real
-        teams = execute_real_algorithm(json_data)
+        teams = execute_real_algorithm(data)
         
         if not teams:
             print("❌ Error: No se crearon equipos", file=sys.stderr)

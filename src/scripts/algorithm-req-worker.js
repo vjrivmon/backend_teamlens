@@ -88,43 +88,72 @@ async function runAlgorithm() {
         console.log(`📊 [AlgorithmWorker] Output: ${pythonOutput.substring(0, 500)}...`);
 
         // 6. Procesar resultado de Python
-        let teams;
+        let algorithmResult;
         try {
-            // El output de Python debería ser un array de arrays
-            teams = JSON.parse(pythonOutput.trim());
-            console.log(`📊 [AlgorithmWorker] Teams parseados: ${teams.length} equipos`);
+            // El output de Python puede ser un objeto con teams, fitness, etc. o un array directo
+            algorithmResult = JSON.parse(pythonOutput.trim());
+            console.log(`📊 [AlgorithmWorker] Resultado parseado:`, typeof algorithmResult);
+            
+            // Extraer teams según el formato
+            let teams;
+            if (algorithmResult.teams && Array.isArray(algorithmResult.teams)) {
+                // Nuevo formato con objeto resultado
+                teams = algorithmResult.teams;
+                console.log(`📊 [AlgorithmWorker] Usando formato objeto: ${teams.length} equipos`);
+                console.log(`⚡ [AlgorithmWorker] Fitness: ${algorithmResult.fitness || 'N/A'}`);
+                console.log(`⏱️ [AlgorithmWorker] Tiempo: ${algorithmResult.execution_time || 'N/A'}s`);
+            } else if (Array.isArray(algorithmResult)) {
+                // Formato legacy con array directo
+                teams = algorithmResult;
+                console.log(`📊 [AlgorithmWorker] Usando formato array: ${teams.length} equipos`);
+            } else {
+                throw new Error('Formato de resultado no reconocido');
+            }
+            
+            // Validar que teams es válido
+            if (!Array.isArray(teams) || teams.length === 0) {
+                throw new Error('No se generaron equipos válidos');
+            }
+            
+            console.log(`✅ [AlgorithmWorker] Teams extraídos correctamente: ${teams.length} equipos`);
         } catch (e) {
-            console.log(`⚠️ [AlgorithmWorker] Error parseando output, usando formato raw`);
-            teams = pythonOutput.trim();
+            console.log(`⚠️ [AlgorithmWorker] Error parseando output: ${e.message}`);
+            console.log(`🔍 [AlgorithmWorker] Output raw: ${pythonOutput.substring(0, 500)}...`);
+            throw new Error(`Error parseando resultado del algoritmo: ${e.message}`);
         }
 
-        // 7. CORREGIDO: Mapear índices a IDs reales usando orderedStudentIds
-        const studentIds = orderedStudentIds || [];
-        console.log(`🔗 [AlgorithmWorker] IDs disponibles: ${studentIds.length}`);
-
-        let result;
-        if (Array.isArray(teams) && Array.isArray(teams[0])) {
-            // Mapear índices a IDs reales
-            result = teams.map(team => 
-                team.map(index => {
-                    if (typeof index === 'number' && index >= 0 && index < studentIds.length) {
-                        return studentIds[index];
-                    }
-                    return null; // Para índices inválidos
-                }).filter(id => id !== null)
-            );
-            console.log(`🎯 [AlgorithmWorker] Resultado mapeado: ${result.length} equipos con IDs reales`);
-        } else {
-            result = teams;
-            console.log(`⚠️ [AlgorithmWorker] Resultado sin mapear (formato inesperado)`);
+        // 7. Los teams ya vienen con IDs reales desde Python, no necesitamos mapear
+        console.log(`🎯 [AlgorithmWorker] Resultado final: ${teams.length} equipos con IDs reales`);
+        
+        // Validar que cada equipo tiene miembros válidos
+        const validTeams = teams.filter(team => 
+            Array.isArray(team) && team.length > 0 && 
+            team.every(memberId => typeof memberId === 'string' && memberId.length > 0)
+        );
+        
+        if (validTeams.length === 0) {
+            throw new Error('No se generaron equipos válidos con IDs de miembros');
         }
+        
+        console.log(`✅ [AlgorithmWorker] ${validTeams.length} equipos válidos confirmados`);
 
-        // 8. Enviar resultado
+        // 8. Retornar resultado
+        const result = {
+            teams: validTeams,
+            metadata: {
+                totalTeams: validTeams.length,
+                fitness: algorithmResult.fitness || null,
+                executionTime: algorithmResult.execution_time || null,
+                totalMembers: algorithmResult.total_members || null
+            }
+        };
+
+        // 9. Enviar resultado
         const response = {
             success: true,
-            teams: result,
+            teams: result.teams,
             studentsProcessed: studentsCount,
-            teamsCreated: Array.isArray(result) ? result.length : 0,
+            teamsCreated: result.teams.length,
             executionTime: new Date().toISOString()
         };
 

@@ -31,14 +31,49 @@ def execute_real_algorithm(data):
         
         # 🔍 DEBUGGING: Intentar crear el problema con logging detallado
         print("🔍 DEBUGGING - Intentando crear TraitTeamFormationProblem...", file=sys.stderr)
-        try:
-            # Crear el problema usando TraitTeamFormationProblem que es más flexible
-            problem = TraitTeamFormationProblem.from_json_object(data)
-            print(f"✅ Problema creado con {problem.number_members} miembros", file=sys.stderr)
-        except Exception as problem_error:
-            print(f"❌ Error creando problema: {problem_error}", file=sys.stderr)
-            print(f"🔍 Tipo de error: {type(problem_error)}", file=sys.stderr)
-            raise problem_error
+        problem = TraitTeamFormationProblem.from_json_object(data)
+        print(f"✅ Problema creado con {problem.number_members} miembros", file=sys.stderr)
+        
+        # NUEVO: Crear mapeo de IDs reales a índices numéricos
+        print("🔄 Creando mapeo de IDs a índices numéricos...", file=sys.stderr)
+        member_ids = []
+        index_to_id_map = {}
+        id_to_index_map = {}
+        
+        # Extraer IDs únicos de las constraints
+        for constraint in data.get('constraints', []):
+            if 'members' in constraint and constraint['members']:
+                for member_id in constraint['members']:
+                    if isinstance(member_id, str) and member_id not in id_to_index_map:
+                        index = len(member_ids)
+                        member_ids.append(member_id)
+                        id_to_index_map[member_id] = index
+                        index_to_id_map[index] = member_id
+        
+        print(f"📋 Mapeo creado: {len(member_ids)} IDs únicos", file=sys.stderr)
+        print(f"🔍 ID to Index map: {id_to_index_map}", file=sys.stderr)
+        
+        # Convertir constraints que usan IDs de string a índices numéricos
+        print("🔄 Convirtiendo constraints de IDs a índices...", file=sys.stderr)
+        converted_constraints = []
+        for constraint in data.get('constraints', []):
+            new_constraint = constraint.copy()
+            if 'members' in constraint and constraint['members']:
+                # Convertir solo si contiene strings
+                if constraint['members'] and isinstance(constraint['members'][0], str):
+                    new_constraint['members'] = [
+                        id_to_index_map[member_id] if member_id in id_to_index_map else member_id 
+                        for member_id in constraint['members']
+                    ]
+                    print(f"   Convertida: {constraint['members']} -> {new_constraint['members']}", file=sys.stderr)
+            converted_constraints.append(new_constraint)
+        
+        # Actualizar data con constraints convertidas
+        data['constraints'] = converted_constraints
+        
+        # Recrear problema con datos convertidos
+        print("🔄 Recreando problema con índices numéricos...", file=sys.stderr)
+        problem = TraitTeamFormationProblem.from_json_object(data)
         
         # Mostrar información detallada de constraints
         print(f"📋 Constraints del problema:", file=sys.stderr)
@@ -73,14 +108,41 @@ def execute_real_algorithm(data):
             print("❌ El algoritmo no encontró una solución válida", file=sys.stderr)
             return None
             
-        # Convertir la solución a formato de equipos
-        teams = solution.get_teams()
+        # Obtener la solución
+        teams = algorithm.get_solution()
+        end_time = time.time()
         
-        print(f"🎉 Solución encontrada: {len(teams)} equipos", file=sys.stderr)
+        print(f"⏱️ Algoritmo completado en {end_time - start_time:.2f} segundos", file=sys.stderr)
+        print(f"🎯 Número de equipos generados: {len(teams)}", file=sys.stderr)
+        
+        # NUEVO: Convertir índices numéricos de vuelta a IDs reales
+        print("🔄 Convirtiendo índices de vuelta a IDs reales...", file=sys.stderr)
+        
+        result_teams = []
         for i, team in enumerate(teams):
-            print(f"   Equipo {i+1}: {len(team)} miembros (índices: {team})", file=sys.stderr)
+            # Si tenemos mapeo, convertir índices a IDs reales
+            if index_to_id_map and len(index_to_id_map) > 0:
+                # Convertir índices numéricos a IDs reales
+                team_with_real_ids = [
+                    index_to_id_map.get(member_index, f"unknown_{member_index}") 
+                    for member_index in team
+                ]
+                result_teams.append(team_with_real_ids)
+                print(f"   Equipo {i+1}: {team} -> {team_with_real_ids}", file=sys.stderr)
+            else:
+                # Si no hay mapeo, usar los miembros tal como están
+                result_teams.append(list(team))
+                print(f"   Equipo {i+1}: {list(team)} (sin conversión)", file=sys.stderr)
         
-        return teams
+        # Crear estructura de resultado
+        result = {
+            "teams": result_teams,
+            "fitness": algorithm._best_solution_value if hasattr(algorithm, '_best_solution_value') else 0,
+            "execution_time": end_time - start_time,
+            "total_members": data['number_members']
+        }
+        
+        return result
         
     except ImportError as e:
         print(f"❌ Error importando pyteamformation: {e}", file=sys.stderr)
@@ -136,19 +198,19 @@ def main():
         print(f"🔧 Constraints: {len(data.get('constraints', []))}", file=sys.stderr)
         
         # Ejecutar algoritmo real
-        teams = execute_real_algorithm(data)
+        result = execute_real_algorithm(data)
         
-        if not teams:
+        if not result:
             print("❌ Error: No se crearon equipos", file=sys.stderr)
             return 1
             
         # Convertir resultado a JSON
-        teams_json = json.dumps(teams, indent=2)
+        result_json = json.dumps(result, indent=2)
         
-        print(f"✅ Algoritmo completado: {len(teams)} equipos creados", file=sys.stderr)
+        print(f"✅ Algoritmo completado: {len(result['teams'])} equipos creados", file=sys.stderr)
         
         # Imprimir resultado en stdout (para captura del worker)
-        print(teams_json)
+        print(result_json)
         
         return 0
         

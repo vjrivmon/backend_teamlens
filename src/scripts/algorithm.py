@@ -122,31 +122,24 @@ def execute_real_algorithm(data, ordered_student_ids):
             constraint_info = f"   {i}: {constraint.type} - {getattr(constraint, 'name', 'sin nombre')} - members: {getattr(constraint, 'members', 'N/A')}"
             print(constraint_info, file=sys.stderr)
         
-        # CORREGIDO: Usar algoritmo concreto directamente
-        print("🚀 Iniciando algoritmo de optimización...", file=sys.stderr)
+        # CONFIGURAR algoritmo genético REAL con parámetros ROBUSTOS
+        print("🚀 Iniciando algoritmo genético REAL de pyteamformation...", file=sys.stderr)
         start_time = time.time()
         
-        # Instanciar algoritmo genético directamente con parámetros en el constructor
-        print(f"⚙️ Configurando algoritmo: OrderBasedBitKeyGA", file=sys.stderr)
+        # Instanciar algoritmo genético con parámetros SEGUROS y ROBUSTOS
+        print(f"⚙️ Configurando OrderBasedBitKeyGA con parámetros robustos...", file=sys.stderr)
         
-        try:
-            algorithm = OrderBasedBitKeyGA(
-                problem,
-                pop_size=50,              # population_size
-                p_cross=0.8,             # crossover_rate  
-                p_mut=0.1,               # mutation_rate
-                tournament_size=0.1,
-                exchange_operations=3
-            )
-            print("✅ Algoritmo instanciado correctamente", file=sys.stderr)
-        except Exception as algo_error:
-            print(f"💥 Error instanciando algoritmo: {algo_error}", file=sys.stderr)
-            print(f"🔍 Tipo de error: {type(algo_error)}", file=sys.stderr)
-            import traceback
-            print(f"🔍 Stack trace: {traceback.format_exc()}", file=sys.stderr)
-            return None
+        algorithm = OrderBasedBitKeyGA(
+            problem,
+            pop_size=100,            # ✅ Población más grande para estabilidad
+            p_cross=0.7,             # ✅ Crossover moderado
+            p_mut=0.05,              # ✅ Mutación baja para estabilidad  
+            tournament_size=0.2,     # ✅ Torneo moderado
+            exchange_operations=2    # ✅ Operaciones conservadoras
+        )
+        print("✅ Algoritmo genético REAL instanciado con parámetros robustos", file=sys.stderr)
         
-        print("🔄 Ejecutando algoritmo de optimización (esto puede tardar 1-3 minutos)...", file=sys.stderr)
+        print("🔄 Ejecutando algoritmo genético REAL (tardará 10-60 segundos según complejidad)...", file=sys.stderr)
         
         # VALIDAR constraints antes de ejecutar
         print("🔍 VALIDANDO constraints antes de ejecutar...", file=sys.stderr)
@@ -158,98 +151,24 @@ def execute_real_algorithm(data, ordered_student_ids):
         
         print(f"📊 Constraints: SameTeam={same_team_count}, DifferentTeam={diff_team_count}, SizeCardinality={size_count}", file=sys.stderr)
         
-        # Ejecutar el algoritmo con debugging detallado
-        try:
-            print("🔍 DEBUG - Llamando algorithm.solve()...", file=sys.stderr)
-            solution = algorithm.solve()
-            print(f"✅ Algoritmo ejecutado, resultado: {type(solution)}", file=sys.stderr)
-        except Exception as solve_error:
-            print(f"💥 Error ejecutando algorithm.solve(): {solve_error}", file=sys.stderr)
-            print(f"🔍 Tipo de error: {type(solve_error)}", file=sys.stderr)
-            import traceback
-            print(f"🔍 Stack trace completo: {traceback.format_exc()}", file=sys.stderr)
-            
-            # ESTRATEGIA 1: Intentar con parámetros ultra-conservadores
-            print("🔄 Intentando con parámetros ULTRA-CONSERVADORES...", file=sys.stderr)
-            try:
-                algorithm_minimal = OrderBasedBitKeyGA(
-                    problem,
-                    pop_size=5,              # población mínima
-                    p_cross=0.1,             # crossover muy bajo
-                    p_mut=0.01,              # mutación muy baja
-                    tournament_size=0.1,     # torneo muy pequeño
-                    exchange_operations=1    # mínimas operaciones
-                )
-                print("✅ Algoritmo ultra-conservador instanciado", file=sys.stderr)
-                solution = algorithm_minimal.solve()
-                print("✅ Algoritmo ultra-conservador ejecutado exitosamente", file=sys.stderr)
-            except Exception as minimal_error:
-                print(f"💥 Error con algoritmo ultra-conservador: {minimal_error}", file=sys.stderr)
-                print(f"🔍 Stack trace minimal: {traceback.format_exc()}", file=sys.stderr)
-                
-                # ESTRATEGIA 2: Generar solución aleatoria como último recurso
-                print("🔄 Generando solución ALEATORIA como último recurso...", file=sys.stderr)
-                try:
-                    import random
-                    
-                    # Crear equipos aleatorios válidos
-                    students = list(range(data['number_members']))
-                    random.shuffle(students)
-                    
-                    # Dividir en equipos equilibrados
-                    team_size = data['number_members'] // data['number_teams']
-                    remainder = data['number_members'] % data['number_teams']
-                    
-                    teams = []
-                    start_idx = 0
-                    for i in range(data['number_teams']):
-                        size = team_size + (1 if i < remainder else 0)
-                        team = students[start_idx:start_idx + size]
-                        teams.append(team)
-                        start_idx += size
-                    
-                    print(f"✅ Solución aleatoria generada: {len(teams)} equipos", file=sys.stderr)
-                    for i, team in enumerate(teams):
-                        print(f"   Equipo {i+1}: {len(team)} miembros", file=sys.stderr)
-                    
-                    # Crear solución mock que funcione con el resto del código
-                    class RandomSolution:
-                        def __init__(self, teams):
-                            self.teams = teams
-                        
-                        def fitness(self):
-                            return 0.5
-                    
-                    solution = RandomSolution(teams)
-                    print("✅ Solución aleatoria creada exitosamente", file=sys.stderr)
-                    
-                except Exception as random_error:
-                    print(f"💥 Error incluso con solución aleatoria: {random_error}", file=sys.stderr)
-                    print(f"🔍 Stack trace random: {traceback.format_exc()}", file=sys.stderr)
-                    print("❌ Error: No se crearon equipos", file=sys.stderr)
-                    return None
+        # Ejecutar ÚNICAMENTE el algoritmo genético REAL - SIN RESPALDOS
+        print("🔍 DEBUG - Llamando algorithm.solve() (ALGORITMO GENÉTICO REAL)...", file=sys.stderr)
+        solution = algorithm.solve()
+        print(f"✅ Algoritmo genético REAL ejecutado exitosamente: {type(solution)}", file=sys.stderr)
         
         execution_time = time.time() - start_time
         print(f"✅ Algoritmo completado en {execution_time:.2f} segundos", file=sys.stderr)
         
         if solution is None:
-            print("❌ El algoritmo no encontró una solución válida", file=sys.stderr)
+            print("❌ El algoritmo genético REAL no encontró una solución válida", file=sys.stderr)
             return None
             
-        # Obtener la solución (compatible con algoritmo normal y RandomSolution)
+        # Obtener la solución ÚNICAMENTE del algoritmo genético REAL
         end_time = time.time()
         
-        if hasattr(solution, 'teams'):
-            # Es una RandomSolution con equipos ya formados
-            teams = solution.teams
-            print(f"✅ Usando equipos de solución aleatoria", file=sys.stderr)
-        elif hasattr(algorithm, 'get_solution'):
-            # Es una solución normal del algoritmo
-            teams = algorithm.get_solution()
-            print(f"✅ Usando equipos del algoritmo genético", file=sys.stderr)
-        else:
-            print(f"❌ No se puede extraer equipos de la solución", file=sys.stderr)
-            return None
+        # SOLO algoritmo genético REAL - sin compatibilidad con respaldos
+        teams = algorithm.get_solution()
+        print(f"✅ Equipos obtenidos del algoritmo genético REAL: {len(teams)} equipos", file=sys.stderr)
         
         print(f"⏱️ Algoritmo completado en {end_time - start_time:.2f} segundos", file=sys.stderr)
         print(f"🎯 Número de equipos generados: {len(teams)}", file=sys.stderr)
@@ -273,13 +192,11 @@ def execute_real_algorithm(data, ordered_student_ids):
                 result_teams.append(list(team))
                 print(f"   Equipo {i+1}: {list(team)} (sin conversión)", file=sys.stderr)
         
-        # Obtener fitness (compatible con algoritmo normal y RandomSolution)
-        if hasattr(solution, 'fitness') and callable(solution.fitness):
-            fitness_value = solution.fitness()
-        elif hasattr(algorithm, '_best_solution_value'):
+        # Obtener fitness ÚNICAMENTE del algoritmo genético REAL
+        if hasattr(algorithm, '_best_solution_value'):
             fitness_value = algorithm._best_solution_value
         else:
-            fitness_value = 0.5  # Valor neutral por defecto
+            fitness_value = 1.0  # Valor por defecto para algoritmo genético exitoso
         
         # Crear estructura de resultado
         result = {

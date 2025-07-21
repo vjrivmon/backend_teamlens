@@ -96,19 +96,56 @@ def execute_real_algorithm(data, ordered_student_ids):
         
         # Instanciar algoritmo genético directamente con parámetros en el constructor
         print(f"⚙️ Configurando algoritmo: OrderBasedBitKeyGA", file=sys.stderr)
-        algorithm = OrderBasedBitKeyGA(
-            problem,
-            pop_size=50,              # population_size
-            p_cross=0.8,             # crossover_rate  
-            p_mut=0.1,               # mutation_rate
-            tournament_size=0.1,
-            exchange_operations=3
-        )
+        
+        try:
+            algorithm = OrderBasedBitKeyGA(
+                problem,
+                pop_size=50,              # population_size
+                p_cross=0.8,             # crossover_rate  
+                p_mut=0.1,               # mutation_rate
+                tournament_size=0.1,
+                exchange_operations=3
+            )
+            print("✅ Algoritmo instanciado correctamente", file=sys.stderr)
+        except Exception as algo_error:
+            print(f"💥 Error instanciando algoritmo: {algo_error}", file=sys.stderr)
+            print(f"🔍 Tipo de error: {type(algo_error)}", file=sys.stderr)
+            import traceback
+            print(f"🔍 Stack trace: {traceback.format_exc()}", file=sys.stderr)
+            return None
         
         print("🔄 Ejecutando algoritmo de optimización (esto puede tardar 1-3 minutos)...", file=sys.stderr)
         
-        # Ejecutar el algoritmo
-        solution = algorithm.solve()
+        # Ejecutar el algoritmo con debugging detallado
+        try:
+            print("🔍 DEBUG - Llamando algorithm.solve()...", file=sys.stderr)
+            solution = algorithm.solve()
+            print(f"✅ Algoritmo ejecutado, resultado: {type(solution)}", file=sys.stderr)
+        except Exception as solve_error:
+            print(f"💥 Error ejecutando algorithm.solve(): {solve_error}", file=sys.stderr)
+            print(f"🔍 Tipo de error: {type(solve_error)}", file=sys.stderr)
+            import traceback
+            print(f"🔍 Stack trace completo: {traceback.format_exc()}", file=sys.stderr)
+            
+            # Intentar con parámetros más conservadores
+            print("🔄 Intentando con parámetros más conservadores...", file=sys.stderr)
+            try:
+                algorithm_simple = OrderBasedBitKeyGA(
+                    problem,
+                    pop_size=10,              # población más pequeña
+                    p_cross=0.5,             # crossover más conservador
+                    p_mut=0.05,              # mutación más baja
+                    tournament_size=0.2,
+                    exchange_operations=1    # menos operaciones
+                )
+                print("✅ Algoritmo simple instanciado", file=sys.stderr)
+                solution = algorithm_simple.solve()
+                print("✅ Algoritmo simple ejecutado exitosamente", file=sys.stderr)
+            except Exception as simple_error:
+                print(f"💥 Error incluso con parámetros simples: {simple_error}", file=sys.stderr)
+                import traceback
+                print(f"🔍 Stack trace simple: {traceback.format_exc()}", file=sys.stderr)
+                return None
         
         execution_time = time.time() - start_time
         print(f"✅ Algoritmo completado en {execution_time:.2f} segundos", file=sys.stderr)

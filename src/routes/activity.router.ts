@@ -837,8 +837,8 @@ activitiesRouter.post("/:id/algorithm/execute", verifyTeacher, async (req: Reque
         // Paso 9: Preparar datos del worker
         console.log(`🔍 [AlgorithmExecute] Paso 9: Preparando datos del worker...`);
         
-        // CRÍTICO: Enviar los IDs de estudiantes en el orden exacto usado para el JSON
-        const orderedStudentIds = studentsWithBelbin.map(student => student._id.toString());
+        // CRÍTICO: Enviar los IDs de TODOS los estudiantes seleccionados (con o sin Belbin)
+        const orderedStudentIds = allSelectedStudents?.map(student => student._id.toString()) || [];
         
         // CORREGIDO: Enviar todos los campos que el worker espera
         const customConstraints = processedAlgorithmData.constraints.filter((c: any) => 

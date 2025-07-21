@@ -50,18 +50,29 @@ async function runAlgorithm() {
 
         // 4. Ejecutar script Python
         const pythonScript = path.join(__dirname, 'algorithm.py');
-        
-        if (!fs.existsSync(pythonScript)) {
-            throw new Error(`Script Python no encontrado: ${pythonScript}`);
-        }
-
-        console.log(`🐍 [AlgorithmWorker] Ejecutando Python: ${pythonScript}`);
-        console.log(`📊 [AlgorithmWorker] Datos JSON: ${JSON.stringify(pythonAlgorithmData).substring(0, 200)}...`);
-
-        const pythonProcess = spawn('python3', [pythonScript, JSON.stringify(pythonAlgorithmData)]);
+        console.log(`🐍 [AlgorithmWorker] Ejecutando: ${pythonScript}`);
 
         let pythonOutput = '';
         let pythonError = '';
+
+        // NUEVO: Crear datos completos que incluyen orderedStudentIds
+        const pythonInput = {
+            algorithm_data: pythonAlgorithmData,
+            ordered_student_ids: orderedStudentIds || []
+        };
+
+        console.log(`📊 [AlgorithmWorker] Enviando a Python:`);
+        console.log(`   - Algorithm data: ${pythonAlgorithmData.number_members} miembros`);
+        console.log(`   - Ordered IDs: ${pythonInput.ordered_student_ids.length} IDs`);
+        
+        const pythonProcess = spawn('python3', [pythonScript], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            cwd: __dirname
+        });
+
+        // Enviar datos via stdin en lugar de argumentos
+        pythonProcess.stdin.write(JSON.stringify(pythonInput));
+        pythonProcess.stdin.end();
 
         pythonProcess.stdout.on('data', (data) => {
             pythonOutput += data.toString();

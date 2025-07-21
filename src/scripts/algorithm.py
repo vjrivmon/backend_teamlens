@@ -4,7 +4,7 @@ import time
 import os
 from pathlib import Path
 
-def execute_real_algorithm(data):
+def execute_real_algorithm(data, ordered_student_ids):
     """
     Ejecuta el algoritmo real de pyteamformation
     """
@@ -34,24 +34,30 @@ def execute_real_algorithm(data):
         problem = TraitTeamFormationProblem.from_json_object(data)
         print(f"✅ Problema creado con {problem.number_members} miembros", file=sys.stderr)
         
-        # NUEVO: Crear mapeo de IDs reales a índices numéricos
-        print("🔄 Creando mapeo de IDs a índices numéricos...", file=sys.stderr)
-        member_ids = []
+        # NUEVO: Crear mapeo COMPLETO usando ordered_student_ids
+        print("🔄 Creando mapeo COMPLETO de estudiantes...", file=sys.stderr)
+        print(f"📋 IDs ordenados recibidos: {len(ordered_student_ids)} estudiantes", file=sys.stderr)
+        print(f"🔍 Primeros 5 IDs: {ordered_student_ids[:5] if ordered_student_ids else []}", file=sys.stderr)
+        
+        # Crear mapeo completo bidireccional
         index_to_id_map = {}
         id_to_index_map = {}
         
-        # Extraer IDs únicos de las constraints
-        for constraint in data.get('constraints', []):
-            if 'members' in constraint and constraint['members']:
-                for member_id in constraint['members']:
-                    if isinstance(member_id, str) and member_id not in id_to_index_map:
-                        index = len(member_ids)
-                        member_ids.append(member_id)
-                        id_to_index_map[member_id] = index
-                        index_to_id_map[index] = member_id
+        for index, student_id in enumerate(ordered_student_ids):
+            index_to_id_map[index] = student_id
+            id_to_index_map[student_id] = index
         
-        print(f"📋 Mapeo creado: {len(member_ids)} IDs únicos", file=sys.stderr)
-        print(f"🔍 ID to Index map: {id_to_index_map}", file=sys.stderr)
+        print(f"✅ Mapeo completo creado: {len(ordered_student_ids)} estudiantes", file=sys.stderr)
+        print(f"🔍 Índices 0-4 → IDs: {[index_to_id_map.get(i, 'N/A') for i in range(min(5, len(ordered_student_ids)))]}", file=sys.stderr)
+        
+        # Verificar que el número de miembros coincide
+        if data['number_members'] != len(ordered_student_ids):
+            print(f"⚠️ ADVERTENCIA: Discrepancia en número de miembros:", file=sys.stderr)
+            print(f"   - JSON dice: {data['number_members']}", file=sys.stderr)
+            print(f"   - IDs recibidos: {len(ordered_student_ids)}", file=sys.stderr)
+            # Usar el número menor para evitar errores
+            data['number_members'] = min(data['number_members'], len(ordered_student_ids))
+            print(f"   - Usando: {data['number_members']}", file=sys.stderr)
         
         # Convertir constraints que usan IDs de string a índices numéricos
         print("🔄 Convirtiendo constraints de IDs a índices...", file=sys.stderr)
@@ -61,10 +67,13 @@ def execute_real_algorithm(data):
             if 'members' in constraint and constraint['members']:
                 # Convertir solo si contiene strings
                 if constraint['members'] and isinstance(constraint['members'][0], str):
-                    new_constraint['members'] = [
-                        id_to_index_map[member_id] if member_id in id_to_index_map else member_id 
-                        for member_id in constraint['members']
-                    ]
+                    converted_members = []
+                    for member_id in constraint['members']:
+                        if member_id in id_to_index_map:
+                            converted_members.append(id_to_index_map[member_id])
+                        else:
+                            print(f"⚠️ ID no encontrado en mapeo: {member_id}", file=sys.stderr)
+                    new_constraint['members'] = converted_members
                     print(f"   Convertida: {constraint['members']} -> {new_constraint['members']}", file=sys.stderr)
             converted_constraints.append(new_constraint)
         
@@ -153,56 +162,59 @@ def execute_real_algorithm(data):
         print("💥 CRÍTICO: algoritmo pyteamformation falló", file=sys.stderr)
         return None
 
-def main():
-    print("🚀 Iniciando algoritmo de formación de equipos REAL...", file=sys.stderr)
-    
-    if len(sys.argv) < 2:
-        print("❌ Error: No se proporcionó ningún dato JSON.", file=sys.stderr)
-        return 1
+# Función principal eliminada - código movido a if __name__ == "__main__"
 
-    data_str = sys.argv[1]
-    print(f"📋 Datos recibidos: {len(data_str)} caracteres", file=sys.stderr)
-    
-    # 🔍 DEBUGGING: Imprimir los datos completos para diagnóstico
-    print("🔍 DEBUGGING - Datos JSON completos recibidos:", file=sys.stderr)
-    print(data_str, file=sys.stderr)
-    print("🔍 DEBUGGING - Fin de datos JSON", file=sys.stderr)
-    
+if __name__ == "__main__":
     try:
-        data = json.loads(data_str)
-        print("✅ JSON parseado correctamente", file=sys.stderr)
+        start_time = time.time()
         
-        # 🔍 DEBUGGING: Mostrar estructura de datos detallada
-        print(f"🔍 DEBUGGING - Estructura de datos:", file=sys.stderr)
-        print(f"   - members: {len(data.get('members', []))}", file=sys.stderr)
-        print(f"   - constraints: {len(data.get('constraints', []))}", file=sys.stderr)
-        print(f"   - team_size: {data.get('team_size', 'undefined')}", file=sys.stderr)
+        print("🚀 Iniciando algoritmo de formación de equipos REAL...", file=sys.stderr)
         
-        # Mostrar cada miembro en detalle
-        for i, member in enumerate(data.get('members', [])[:3]):  # Solo primeros 3 para no saturar logs
-            print(f"   - member[{i}]: {member}", file=sys.stderr)
+        # NUEVO: Leer datos desde stdin en lugar de argumentos
+        print("📥 Leyendo datos desde stdin...", file=sys.stderr)
         
-        if len(data.get('members', [])) > 3:
-            print(f"   - ... y {len(data.get('members', [])) - 3} miembros más", file=sys.stderr)
-    
-        # Validar estructura básica
-        if 'members' not in data:
-            print("❌ Error: No se encontró 'members' en los datos", file=sys.stderr)
-            return 1
-            
-        if not data['members']:
-            print("❌ Error: Lista de miembros está vacía", file=sys.stderr)
-            return 1
-            
-        print(f"👥 Procesando {len(data['members'])} miembros", file=sys.stderr)
-        print(f"🔧 Constraints: {len(data.get('constraints', []))}", file=sys.stderr)
+        input_data = ""
+        for line in sys.stdin:
+            input_data += line
+        
+        if not input_data.strip():
+            print("❌ Error: No se recibieron datos desde stdin", file=sys.stderr)
+            sys.exit(1)
+        
+        print(f"📋 Datos recibidos: {len(input_data)} caracteres", file=sys.stderr)
+        
+        # Parsear datos completos
+        try:
+            full_data = json.loads(input_data.strip())
+            print("✅ JSON parseado correctamente", file=sys.stderr)
+        except json.JSONDecodeError as e:
+            print(f"❌ Error parseando JSON: {e}", file=sys.stderr)
+            print(f"🔍 Datos recibidos: {input_data[:200]}...", file=sys.stderr)
+            sys.exit(1)
+        
+        # Extraer algorithm_data y ordered_student_ids
+        algorithm_data = full_data.get('algorithm_data')
+        ordered_student_ids = full_data.get('ordered_student_ids', [])
+        
+        if not algorithm_data:
+            print("❌ Error: No se encontró algorithm_data en los datos recibidos", file=sys.stderr)
+            sys.exit(1)
+        
+        print(f"🔍 DEBUGGING - Estructura de datos extraída:", file=sys.stderr)
+        print(f"   - algorithm_data: {type(algorithm_data)}", file=sys.stderr)
+        print(f"   - members: {algorithm_data.get('number_members', 'N/A')}", file=sys.stderr)
+        print(f"   - constraints: {len(algorithm_data.get('constraints', []))}", file=sys.stderr)
+        print(f"   - ordered_student_ids: {len(ordered_student_ids)}", file=sys.stderr)
+        
+        if not ordered_student_ids:
+            print("⚠️ ADVERTENCIA: No se recibieron ordered_student_ids", file=sys.stderr)
         
         # Ejecutar algoritmo real
-        result = execute_real_algorithm(data)
+        result = execute_real_algorithm(algorithm_data, ordered_student_ids)
         
         if not result:
             print("❌ Error: No se crearon equipos", file=sys.stderr)
-            return 1
+            sys.exit(1)
             
         # Convertir resultado a JSON
         result_json = json.dumps(result, indent=2)
@@ -212,15 +224,12 @@ def main():
         # Imprimir resultado en stdout (para captura del worker)
         print(result_json)
         
-        return 0
+        sys.exit(0)
         
     except json.JSONDecodeError as e:
         print(f"❌ Error parseando JSON: {e}", file=sys.stderr)
-        return 1
+        sys.exit(1)
     except Exception as e:
         print(f"💥 Error inesperado: {e}", file=sys.stderr)
-        return 1
-
-if __name__ == "__main__":
-    sys.exit(main())
+        sys.exit(1)
     

@@ -26,7 +26,13 @@ def execute_real_algorithm(data, ordered_student_ids):
         # DEBUGGING: Comparar datos reales vs. datos de prueba
         print("🔍 DEBUGGING - Comparando datos reales vs. prueba...", file=sys.stderr)
         print(f"📊 Número de miembros: {data['number_members']}", file=sys.stderr)
-        print(f"📊 Número de teams: {data['number_teams']}", file=sys.stderr)
+        
+        # Verificar si existe number_teams
+        if 'number_teams' in data:
+            print(f"📊 Número de teams: {data['number_teams']}", file=sys.stderr)
+        else:
+            print("❌ FALTA el campo 'number_teams' en los datos", file=sys.stderr)
+            print(f"🔍 Campos disponibles: {list(data.keys())}", file=sys.stderr)
         
         # Verificar estructura de traits
         if 'traits' in data:

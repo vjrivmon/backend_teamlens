@@ -658,14 +658,32 @@ activitiesRouter.post("/:id/algorithm/execute", verifyTeacher, async (req: Reque
         // Paso 4: Construir datos del algoritmo con traits reales
         console.log(`🔍 [AlgorithmExecute] Paso 4: Construyendo datos del algoritmo con traits reales...`);
         
+        // CRÍTICO: Calcular number_teams ÚNICAMENTE desde datos reales del frontend
+        let calculatedNumberTeams: number;
+        
+        if (groupConfigurations && groupConfigurations.length > 0) {
+            // Sumar TODOS los maxQuantity de las configuraciones reales del frontend
+            calculatedNumberTeams = groupConfigurations.reduce((total: number, config: any) => 
+                total + config.maxQuantity, 0);
+            console.log(`🔢 [AlgorithmExecute] number_teams desde configuraciones reales del frontend:`);
+            groupConfigurations.forEach((config: any, index: number) => {
+                console.log(`   Config ${index + 1}: máximo ${config.maxQuantity} grupos de ${config.size} estudiantes`);
+            });
+            console.log(`   Total equipos objetivo: ${calculatedNumberTeams}`);
+        } else {
+            throw new Error('No hay configuraciones de grupos del frontend. El algoritmo requiere configuraciones específicas para calcular number_teams.');
+        }
+
         const processedAlgorithmData = {
             ...algorithmData,
             members: membersWithTraits,
-            number_members: membersWithTraits.length
+            number_members: membersWithTraits.length,
+            number_teams: calculatedNumberTeams  // ✅ NUEVO: Campo requerido por el algoritmo
         };
 
         console.log(`✅ [AlgorithmExecute] Datos del algoritmo corregidos:`);
         console.log(`📊 [AlgorithmExecute] - Miembros: ${processedAlgorithmData.number_members}`);
+        console.log(`📊 [AlgorithmExecute] - Equipos objetivo: ${processedAlgorithmData.number_teams}`);
         console.log(`📊 [AlgorithmExecute] - Members con traits: ${processedAlgorithmData.members.length}`);
         console.log(`📊 [AlgorithmExecute] - Traits sample: ${processedAlgorithmData.members.slice(0, 3).map((m: any) => m.traits.join(',')).join(' | ')}`);
 

@@ -121,13 +121,13 @@ async function runAlgorithm() {
 
         // 6. Procesar resultado de Python
         let algorithmResult;
+        let teams; // ✅ CORREGIDO: Declarar teams fuera del try-catch
         try {
             // El output de Python puede ser un objeto con teams, fitness, etc. o un array directo
             algorithmResult = JSON.parse(pythonOutput.trim());
             console.log(`📊 [AlgorithmWorker] Resultado parseado:`, typeof algorithmResult);
             
             // Extraer teams según el formato
-            let teams;
             if (algorithmResult.teams && Array.isArray(algorithmResult.teams)) {
                 // Nuevo formato con objeto resultado
                 teams = algorithmResult.teams;

@@ -23,6 +23,32 @@ def execute_real_algorithm(data, ordered_student_ids):
         print(f"   - Tipo de data: {type(data)}", file=sys.stderr)
         print(f"   - Keys en data: {list(data.keys()) if isinstance(data, dict) else 'No es dict'}", file=sys.stderr)
         
+        # DEBUGGING: Comparar datos reales vs. datos de prueba
+        print("🔍 DEBUGGING - Comparando datos reales vs. prueba...", file=sys.stderr)
+        print(f"📊 Número de miembros: {data['number_members']}", file=sys.stderr)
+        print(f"📊 Número de teams: {data['number_teams']}", file=sys.stderr)
+        
+        # Verificar estructura de traits
+        if 'traits' in data:
+            print(f"📊 Traits encontrados: {len(data['traits'])}", file=sys.stderr)
+            for i, trait in enumerate(data['traits'][:3]):  # Solo los primeros 3
+                print(f"   Trait {i}: {len(trait) if isinstance(trait, list) else 'NO_LIST'} valores", file=sys.stderr)
+        else:
+            print("❌ NO se encontraron traits en los datos", file=sys.stderr)
+            
+        # Verificar estructura de constraints  
+        if 'constraints' in data:
+            print(f"📊 Constraints encontrados: {len(data['constraints'])}", file=sys.stderr)
+            for i, constraint in enumerate(data['constraints']):
+                print(f"   Constraint {i}: tipo={constraint.get('type', 'NO_TYPE')}, miembros={len(constraint.get('members', []))}", file=sys.stderr)
+        else:
+            print("❌ NO se encontraron constraints en los datos", file=sys.stderr)
+            
+        # Mostrar un ejemplo completo de los datos
+        print("🔍 DEBUGGING - Datos JSON completos (primeros 500 chars):", file=sys.stderr)
+        json_str = json.dumps(data, indent=2)
+        print(json_str[:500] + "..." if len(json_str) > 500 else json_str, file=sys.stderr)
+        
         # Importar algoritmo concreto - CORREGIDO: usar implementación específica
         from pyteamformation.algorithm.metaheuristic.candel_ga import OrderBasedBitKeyGA
         from pyteamformation.problem.trait_team_formation_problem import TraitTeamFormationProblem

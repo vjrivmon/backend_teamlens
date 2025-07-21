@@ -39,14 +39,35 @@ async function runAlgorithm() {
         console.log(`📊 [AlgorithmWorker] Datos cargados: ${algorithmData.number_members} miembros`);
 
         // 3. Preparar datos para Python
+        // CORREGIDO: Extraer number_teams de los datos REALES del frontend
+        let numberTeams = algorithmData.number_teams;
+        
+        if (!numberTeams) {
+            // Extraer desde SizeCardinality constraints (datos reales del frontend)
+            const sizeConstraints = algorithmData.constraints.filter(c => c.type === 'SizeCardinality');
+            if (sizeConstraints.length > 0) {
+                // Sumar todos los maxQuantity de las configuraciones reales
+                numberTeams = sizeConstraints.reduce((total, constraint) => {
+                    return total + (constraint.max || 0);
+                }, 0);
+                console.log(`🔢 [AlgorithmWorker] number_teams extraído desde constraints reales: ${numberTeams}`);
+            } else {
+                console.log(`⚠️ [AlgorithmWorker] No se encontraron SizeCardinality constraints, usando fallback`);
+                numberTeams = 4; // Fallback conservador
+            }
+        }
+        
         const pythonAlgorithmData = {
             number_members: algorithmData.number_members,
+            number_teams: numberTeams, // ✅ Desde datos reales del frontend
             members: algorithmData.members,
             constraints: algorithmData.constraints,
             problem_type: algorithmData.problem_type || 'TraitTeamFormation',
             agg_func: algorithmData.agg_func || 'sum',
             traits: algorithmData.traits || ['TW', 'CW', 'CH', 'ME', 'CF', 'SH', 'PL', 'RI']
         };
+        
+        console.log(`🔢 [AlgorithmWorker] number_teams final: ${pythonAlgorithmData.number_teams} (${algorithmData.number_teams ? 'desde JSON' : 'desde constraints reales'})`);
 
         // 4. Ejecutar script Python
         const pythonScript = path.join(__dirname, 'algorithm.py');

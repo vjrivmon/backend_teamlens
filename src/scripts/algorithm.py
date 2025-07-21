@@ -91,9 +91,11 @@ def execute_real_algorithm(data, ordered_student_ids):
             data['number_members'] = min(data['number_members'], len(ordered_student_ids))
             print(f"   - Usando: {data['number_members']}", file=sys.stderr)
         
-        # Convertir constraints que usan IDs de string a índices numéricos
-        print("🔄 Convirtiendo constraints de IDs a índices...", file=sys.stderr)
+        # Convertir constraints que usan IDs de string a índices numéricos Y eliminar duplicadas
+        print("🔄 Convirtiendo constraints de IDs a índices y eliminando duplicadas...", file=sys.stderr)
         converted_constraints = []
+        constraint_signatures = set()  # Para detectar duplicadas
+        
         for constraint in data.get('constraints', []):
             new_constraint = constraint.copy()
             if 'members' in constraint and constraint['members']:
@@ -107,10 +109,24 @@ def execute_real_algorithm(data, ordered_student_ids):
                             print(f"⚠️ ID no encontrado en mapeo: {member_id}", file=sys.stderr)
                     new_constraint['members'] = converted_members
                     print(f"   Convertida: {constraint['members']} -> {new_constraint['members']}", file=sys.stderr)
-            converted_constraints.append(new_constraint)
+            
+            # Crear signature para detectar duplicadas
+            if 'members' in new_constraint and new_constraint['members']:
+                signature = f"{new_constraint['type']}:{sorted(new_constraint['members'])}"
+            else:
+                signature = f"{new_constraint['type']}:{new_constraint.get('name', '')}"
+            
+            # Solo añadir si no es duplicada
+            if signature not in constraint_signatures:
+                converted_constraints.append(new_constraint)
+                constraint_signatures.add(signature)
+                print(f"   ✅ Constraint añadida: {new_constraint['type']}", file=sys.stderr)
+            else:
+                print(f"   🗑️ Constraint duplicada eliminada: {new_constraint['type']}", file=sys.stderr)
         
-        # Actualizar data con constraints convertidas
+        # Actualizar data con constraints convertidas y sin duplicadas
         data['constraints'] = converted_constraints
+        print(f"🧹 Constraints finales: {len(converted_constraints)} (duplicadas eliminadas)", file=sys.stderr)
         
         # Recrear problema con datos convertidos
         print("🔄 Recreando problema con índices numéricos...", file=sys.stderr)
@@ -126,18 +142,27 @@ def execute_real_algorithm(data, ordered_student_ids):
         print("🚀 Iniciando algoritmo genético REAL de pyteamformation...", file=sys.stderr)
         start_time = time.time()
         
-        # Instanciar algoritmo genético con parámetros SEGUROS y ROBUSTOS
-        print(f"⚙️ Configurando OrderBasedBitKeyGA con parámetros robustos...", file=sys.stderr)
+        # Instanciar algoritmo genético REAL con parámetros COMPATIBLES
+        print(f"⚙️ Configurando OrderBasedBitKeyGA con parámetros COMPATIBLES...", file=sys.stderr)
+        
+        # Calcular parámetros apropiados para el problema específico
+        problem_size = data['number_members']
+        safe_pop_size = min(50, max(10, problem_size * 2))  # Población proporcional al problema
+        safe_tournament_size = max(2, min(5, problem_size // 4))  # Entero, no fracción
+        
+        print(f"📊 Parámetros calculados para problema de {problem_size} estudiantes:", file=sys.stderr)
+        print(f"   - Población: {safe_pop_size}", file=sys.stderr)
+        print(f"   - Torneo: {safe_tournament_size}", file=sys.stderr)
         
         algorithm = OrderBasedBitKeyGA(
             problem,
-            pop_size=100,            # ✅ Población más grande para estabilidad
-            p_cross=0.7,             # ✅ Crossover moderado
-            p_mut=0.05,              # ✅ Mutación baja para estabilidad  
-            tournament_size=0.2,     # ✅ Torneo moderado
-            exchange_operations=2    # ✅ Operaciones conservadoras
+            pop_size=safe_pop_size,     # ✅ Población apropiada para el problema
+            p_cross=0.8,                # ✅ Crossover estándar
+            p_mut=0.1,                  # ✅ Mutación estándar
+            tournament_size=safe_tournament_size,  # ✅ Torneo como ENTERO
+            exchange_operations=1       # ✅ Operaciones mínimas para estabilidad
         )
-        print("✅ Algoritmo genético REAL instanciado con parámetros robustos", file=sys.stderr)
+        print("✅ Algoritmo genético REAL instanciado con parámetros COMPATIBLES", file=sys.stderr)
         
         print("🔄 Ejecutando algoritmo genético REAL (tardará 10-60 segundos según complejidad)...", file=sys.stderr)
         
@@ -153,8 +178,23 @@ def execute_real_algorithm(data, ordered_student_ids):
         
         # Ejecutar ÚNICAMENTE el algoritmo genético REAL - SIN RESPALDOS
         print("🔍 DEBUG - Llamando algorithm.solve() (ALGORITMO GENÉTICO REAL)...", file=sys.stderr)
-        solution = algorithm.solve()
-        print(f"✅ Algoritmo genético REAL ejecutado exitosamente: {type(solution)}", file=sys.stderr)
+        
+        try:
+            solution = algorithm.solve()
+            print(f"✅ Algoritmo genético REAL ejecutado exitosamente: {type(solution)}", file=sys.stderr)
+        except Exception as solve_error:
+            print(f"💥 Error INTERNO en algoritmo genético REAL: {solve_error}", file=sys.stderr)
+            print(f"🔍 Tipo de error: {type(solve_error)}", file=sys.stderr)
+            
+            # Obtener stack trace detallado para debugging
+            import traceback
+            print(f"🔍 Stack trace completo del algoritmo genético:", file=sys.stderr)
+            print(traceback.format_exc(), file=sys.stderr)
+            
+            # NO hay respaldo - el algoritmo genético REAL falló
+            print("❌ CRÍTICO: El algoritmo genético REAL de pyteamformation falló", file=sys.stderr)
+            print("❌ Sin respaldos - el algoritmo debe resolverse con los parámetros correctos", file=sys.stderr)
+            return None
         
         execution_time = time.time() - start_time
         print(f"✅ Algoritmo completado en {execution_time:.2f} segundos", file=sys.stderr)

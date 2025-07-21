@@ -25,6 +25,7 @@ interface AlgorithmConstraint {
 
 interface AlgorithmData {
     number_members: number;  // TOTAL de estudiantes, no tamaño del equipo
+    number_teams: number;    // ✅ NUEVO: Número de equipos objetivo requerido por el algoritmo
     members: AlgorithmMember[];
     agg_func: string;
     constraints: AlgorithmConstraint[];
@@ -336,6 +337,7 @@ export const generateAlgorithmJSON = async (
         // CORREGIDO: Construir datos del algoritmo según plantilla Python
         const algorithmData: AlgorithmData = {
             number_members: numberOfMembers,  // TOTAL de estudiantes, no tamaño del equipo
+            number_teams: maxTeams,           // ✅ NUEVO: Número de equipos objetivo del profesor
             members: members,  // Solo traits, sin IDs
             agg_func: "sum",
             constraints: allConstraints,
@@ -344,7 +346,7 @@ export const generateAlgorithmJSON = async (
         };
 
         console.log(`✅ [AlgorithmFunctions] JSON del algoritmo generado exitosamente`);
-        console.log(`📋 [AlgorithmFunctions] Resumen: ${members.length} miembros, ${allConstraints.length} constraints`);
+        console.log(`📋 [AlgorithmFunctions] Resumen: ${members.length} miembros, ${maxTeams} equipos objetivo, ${allConstraints.length} constraints`);
         console.log(`🎯 [AlgorithmFunctions] Parámetros del profesor respetados: ${teamSize} por equipo, ${minTeams}-${maxTeams} equipos`);
 
         return algorithmData;

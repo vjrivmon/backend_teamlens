@@ -1,0 +1,498 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="es">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="format-detection" content="date=no" />
+    <meta name="format-detection" content="address=no" />
+    <meta name="format-detection" content="email=no" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="supported-color-schemes" content="light dark" />
+    <title>{{SUBJECT}} - TeamLens</title>
+
+    <!-- Google Fonts with fallbacks -->
+    <!--[if !mso]><!-->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!--<![endif]-->
+
+    <style type="text/css">
+        /* CSS Reset for Email */
+        * {
+            margin: 0;
+            padding: 0;
+            border: 0;
+            box-sizing: border-box;
+        }
+
+        /* Client-specific styles */
+        #outlook a { padding: 0; }
+        .ReadMsgBody { width: 100%; }
+        .ExternalClass { width: 100%; }
+        .ExternalClass * { line-height: 100%; }
+
+        /* Typography - Email Safe Fonts */
+        body, table, td, p, a, li {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            -webkit-text-size-adjust: 100%;
+            -ms-text-size-adjust: 100%;
+            mso-table-lspace: 0pt;
+            mso-table-rspace: 0pt;
+        }
+
+        /* Base styles */
+        body {
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+            min-width: 100% !important;
+            background-color: #f8fafc;
+            color: #1e293b;
+            line-height: 1.6;
+        }
+
+        table {
+            border-collapse: collapse;
+            mso-table-lspace: 0pt;
+            mso-table-rspace: 0pt;
+        }
+
+        img {
+            border: 0;
+            height: auto;
+            line-height: 100%;
+            outline: none;
+            text-decoration: none;
+            -ms-interpolation-mode: bicubic;
+            max-width: 100%;
+            display: block;
+        }
+
+        /* Email container */
+        .email-wrapper {
+            width: 100%;
+            background-color: #f8fafc;
+            padding: 20px 0;
+        }
+
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        /* Header with improved accessibility */
+        .header {
+            background-color: #2563eb;
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 50%, #1d4ed8 100%);
+            padding: 40px 30px;
+            text-align: center;
+            color: #ffffff;
+        }
+
+        .header-title {
+            font-size: 32px;
+            font-weight: 700;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+
+        .header-subtitle {
+            font-size: 16px;
+            font-weight: 400;
+            margin: 0;
+            opacity: 0.95;
+            line-height: 1.4;
+        }
+
+        /* Content area */
+        .content {
+            padding: 40px 30px;
+            background-color: #ffffff;
+        }
+
+        .content h1 {
+            color: #1e293b;
+            font-size: 28px;
+            font-weight: 700;
+            margin: 0 0 24px 0;
+            line-height: 1.3;
+        }
+
+        .content h2 {
+            color: #1e293b;
+            font-size: 24px;
+            font-weight: 600;
+            margin: 32px 0 16px 0;
+            line-height: 1.3;
+        }
+
+        .content h3 {
+            color: #374151;
+            font-size: 20px;
+            font-weight: 600;
+            margin: 24px 0 12px 0;
+            line-height: 1.4;
+        }
+
+        .content p {
+            font-size: 16px;
+            margin: 0 0 16px 0;
+            color: #4b5563;
+            line-height: 1.6;
+        }
+
+        .content ul {
+            margin: 16px 0;
+            padding-left: 24px;
+        }
+
+        .content li {
+            font-size: 16px;
+            color: #4b5563;
+            margin-bottom: 8px;
+            line-height: 1.5;
+        }
+
+        /* CTA Button - Email Safe with VML fallback */
+        .cta-button {
+            display: inline-block;
+            background-color: #2563eb;
+            color: #ffffff !important;
+            padding: 16px 32px;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 16px;
+            line-height: 1.2;
+            text-align: center;
+            margin: 24px 0;
+            min-width: 200px;
+            border: 2px solid #2563eb;
+            transition: all 0.2s ease;
+        }
+
+        .cta-button:hover {
+            background-color: #1d4ed8;
+            border-color: #1d4ed8;
+            text-decoration: none;
+        }
+
+        /* Info boxes with better contrast */
+        .info-box {
+            background-color: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-left: 4px solid #2563eb;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 24px 0;
+        }
+
+        .info-box p {
+            margin: 0;
+            color: #1e40af;
+        }
+
+        .warning-box {
+            background-color: #fef3c7;
+            border: 1px solid #fbbf24;
+            border-left: 4px solid #f59e0b;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 24px 0;
+        }
+
+        .warning-box p {
+            margin: 0;
+            color: #92400e;
+        }
+
+        .success-box {
+            background-color: #dcfce7;
+            border: 1px solid #86efac;
+            border-left: 4px solid #22c55e;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 24px 0;
+        }
+
+        .success-box p {
+            margin: 0;
+            color: #15803d;
+        }
+
+        /* Statistics cards */
+        .stats-container {
+            margin: 32px 0;
+        }
+
+        .stats-row {
+            width: 100%;
+        }
+
+        .stat-card {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 8px;
+            text-align: center;
+            vertical-align: top;
+        }
+
+        .stat-number {
+            font-size: 24px;
+            font-weight: 700;
+            color: #2563eb;
+            margin: 0 0 4px 0;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: #6b7280;
+            margin: 0;
+            text-transform: uppercase;
+            letter-spacing: 0.025em;
+        }
+
+        /* URL fallback */
+        .url-fallback {
+            background-color: #f3f4f6;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            padding: 16px;
+            font-size: 14px;
+            color: #4b5563;
+            word-break: break-all;
+            font-family: 'Courier New', monospace;
+            margin: 16px 0;
+        }
+
+        /* Footer */
+        .footer {
+            background-color: #f8fafc;
+            border-top: 1px solid #e2e8f0;
+            padding: 32px 30px;
+            text-align: center;
+        }
+
+        .footer-company {
+            font-size: 16px;
+            font-weight: 600;
+            color: #374151;
+            margin: 0 0 12px 0;
+        }
+
+        .footer p {
+            font-size: 14px;
+            color: #6b7280;
+            margin: 8px 0;
+            line-height: 1.5;
+        }
+
+        .footer-legal {
+            font-size: 12px;
+            color: #9ca3af;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        /* Divider */
+        .divider {
+            height: 1px;
+            background-color: #e2e8f0;
+            margin: 32px 0;
+        }
+
+        /* Dark mode support */
+        @media (prefers-color-scheme: dark) {
+            body {
+                background-color: #0f172a !important;
+                color: #e2e8f0 !important;
+            }
+
+            .email-container {
+                background-color: #1e293b !important;
+            }
+
+            .content {
+                background-color: #1e293b !important;
+            }
+
+            .content h1, .content h2 {
+                color: #f1f5f9 !important;
+            }
+
+            .content h3 {
+                color: #e2e8f0 !important;
+            }
+
+            .content p, .content li {
+                color: #cbd5e1 !important;
+            }
+
+            .info-box {
+                background-color: #1e3a8a !important;
+                border-color: #3730a3 !important;
+            }
+
+            .info-box p {
+                color: #ddd6fe !important;
+            }
+
+            .stat-card {
+                background-color: #334155 !important;
+                border-color: #475569 !important;
+            }
+
+            .footer {
+                background-color: #0f172a !important;
+                border-color: #374151 !important;
+            }
+
+            .footer-company {
+                color: #f1f5f9 !important;
+            }
+
+            .url-fallback {
+                background-color: #374151 !important;
+                border-color: #4b5563 !important;
+                color: #d1d5db !important;
+            }
+        }
+
+        /* Responsive design */
+        @media only screen and (max-width: 600px) {
+            .email-container {
+                margin: 10px !important;
+                border-radius: 8px !important;
+            }
+
+            .header, .content, .footer {
+                padding: 24px 20px !important;
+            }
+
+            .header-title {
+                font-size: 28px !important;
+            }
+
+            .content h1 {
+                font-size: 24px !important;
+            }
+
+            .content h2 {
+                font-size: 20px !important;
+            }
+
+            .cta-button {
+                display: block !important;
+                text-align: center !important;
+                width: 100% !important;
+                max-width: 280px !important;
+                margin: 24px auto !important;
+            }
+
+            .stats-row td {
+                display: block !important;
+                width: 100% !important;
+                margin: 8px 0 !important;
+            }
+
+            .stat-card {
+                margin: 8px 0 !important;
+            }
+        }
+
+        @media only screen and (max-width: 480px) {
+            .header, .content, .footer {
+                padding: 20px 16px !important;
+            }
+
+            .content p {
+                font-size: 15px !important;
+            }
+        }
+    </style>
+
+    <!--[if mso]>
+    <style type="text/css">
+        .header {
+            background-color: #2563eb !important;
+            background-image: none !important;
+        }
+        .cta-button {
+            border: 0 !important;
+        }
+        table {
+            border-collapse: collapse;
+        }
+    </style>
+    <![endif]-->
+</head>
+
+<body style="margin: 0; padding: 0; width: 100%; background-color: #f8fafc;">
+    <!-- Email wrapper for full width background -->
+    <table class="email-wrapper" role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+        <tr>
+            <td align="center" valign="top">
+                <!-- Main email container -->
+                <table class="email-container" role="presentation" cellspacing="0" cellpadding="0" border="0" width="600">
+                    <!-- Header -->
+                    <tr>
+                        <td class="header" align="center" valign="middle">
+                            <!--[if mso]>
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td align="center" valign="middle">
+                            <![endif]-->
+
+                            <h1 class="header-title">🎓 TeamLens</h1>
+                            <p class="header-subtitle">Plataforma de Gestión de Equipos Educativos</p>
+
+                            <!--[if mso]>
+                                    </td>
+                                </tr>
+                            </table>
+                            <![endif]-->
+                        </td>
+                    </tr>
+
+                    <!-- Content Area -->
+                    <tr>
+                        <td class="content" align="left" valign="top">
+                            {{CONTENT}}
+                        </td>
+                    </tr>
+
+                    <!-- Footer -->
+                    <tr>
+                        <td class="footer" align="center" valign="top">
+                            <p class="footer-company">🎓 TeamLens - Sistema de Formación de Equipos</p>
+                            <p>Este es un mensaje automático del sistema educativo.</p>
+                            <p>Si tiene consultas, contacte a su profesor o administrador.</p>
+
+                            <div class="footer-legal">
+                                <p>TeamLens es una plataforma educativa diseñada para optimizar la formación de equipos académicos.</p>
+                                <p>Sus datos se procesan conforme a las políticas de privacidad institucionales.</p>
+                            </div>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+
+    <!-- VML Button fallback for Outlook -->
+    <!--[if mso]>
+    <style type="text/css">
+        .cta-button {
+            display: block !important;
+        }
+    </style>
+    <![endif]-->
+</body>
+</html>

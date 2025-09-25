@@ -1,247 +1,162 @@
-# 🎓 Guía de Configuración de Email UPV - TeamLens
+# 📧 Guía de Configuración UPV - TeamLens Email System
 
-## 📋 Resumen Ejecutivo
+## 🎯 Resumen Ejecutivo
 
-**IMPORTANTE**: Tu sistema de email **YA SOPORTA dominios UPV** nativamente. El sistema v3.0 incluye detección automática y priorización de proveedores para correos UPV.
+**¡Tu sistema YA soporta dominios UPV completamente!** Solo necesitas configurar las credenciales correctas. No requiere cambios de código.
 
-**El problema no es técnico, es de configuración** - solo necesitas configurar las credenciales adecuadas.
+## 🔍 Estado Actual
 
----
+### ✅ Lo que YA tienes:
+- Sistema multiproveedor enterprise-grade
+- Detección automática de dominios UPV (@upv.es, @epsg.upv.es, @alumno.upv.es)
+- Rotación automática entre proveedores
+- Límites diarios y fallback automático
+- Templates HTML profesionales
 
-## 🎯 Configuración Paso a Paso para UPV
+### 🔧 Lo que necesitas:
+Solo configurar las variables de entorno para proveedores UPV.
 
-### Opción 1: Outlook/Office365 (RECOMENDADO) 🌟
+## 📋 Opciones de Configuración
 
-La mayoría de instituciones UPV usan Office365. Esta es la opción más confiable:
+### Opción 1: Office365/Outlook (RECOMENDADO)
+**Ventajas**: Hasta 10,000 emails/día, alta disponibilidad, fácil configuración
 
 ```bash
-# En tu archivo .env.production
-OUTLOOK_EMAIL="tu-usuario@upv.es"
-OUTLOOK_PASSWORD="tu-contraseña-institucional"
+# Agregar a tu .env.production:
+OUTLOOK_EMAIL="teamlens@upv.es"
+OUTLOOK_PASSWORD="tu-password-de-aplicacion"
 OUTLOOK_FROM="noreply-teamlens@upv.es"
 ```
 
-**Ventajas:**
-- ✅ Límite alto: 10,000 emails/día
-- ✅ Infraestructura robusta de Microsoft
-- ✅ Compatibilidad completa con dominios UPV
-- ✅ Autenticación institucional
-
 ### Opción 2: SMTP UPV Directo
-
-Si tienes acceso directo al servidor SMTP de UPV:
+**Ventajas**: Control total, sin límites externos
 
 ```bash
-# En tu archivo .env.production
+# Agregar a tu .env.production:
 UPV_SMTP_HOST="smtp.upv.es"
 UPV_SMTP_PORT="587"
 UPV_SMTP_SECURE="false"
-UPV_SMTP_REQUIRE_TLS="true"
-UPV_SMTP_USER="tu-usuario@upv.es"
-UPV_SMTP_PASSWORD="tu-contraseña-institucional"
+UPV_SMTP_USER="teamlens@upv.es"
+UPV_SMTP_PASSWORD="tu-password-institucional"
 UPV_SMTP_FROM="noreply-teamlens@upv.es"
 UPV_SMTP_DAILY_LIMIT="5000"
 ```
 
-**Ventajas:**
-- ✅ Control directo
-- ✅ Límite configurable
-- ✅ Integración nativa con UPV
+## 🎯 Cómo Funciona el Sistema
 
----
+Tu código YA hace esta lógica automáticamente:
 
-## 🔍 Cómo Funciona la Detección Automática
+1. **Email a @upv.es** → Busca SMTP UPV → Busca Outlook → Busca servicios profesionales → Fallback Gmail
+2. **Email a otros dominios** → Usa cualquier proveedor disponible
 
-El sistema **automáticamente detecta** destinatarios UPV:
+## 🚀 Pasos para Implementar
 
-```typescript
-// Dominios detectados automáticamente:
-- @upv.es
-- @epsg.upv.es
-- @alumno.upv.es
+### Paso 1: Obtener Credenciales UPV
+Contacta con IT de la UPV para:
+- [ ] Email institucional para la aplicación
+- [ ] Password de aplicación (no tu password personal)
+- [ ] Confirmación de servidor SMTP (si usas opción 2)
+
+### Paso 2: Configurar Variables de Entorno
+```bash
+# En tu servidor de producción, edita .env.production
+nano .env.production
+
+# Agrega las variables de la Opción 1 o 2
 ```
 
-**Prioridad de Proveedores para UPV:**
-1. 🥇 SMTP UPV Corporativo (si está configurado)
-2. 🥈 Outlook/Office365 (si está configurado)
-3. 🥉 SendGrid/Mailgun (servicios profesionales)
-4. 🔄 Cualquier proveedor disponible (fallback)
-
----
-
-## 🚀 Pasos de Implementación Inmediata
-
-### 1. Identificar Tus Credenciales UPV
-
+### Paso 3: Reiniciar Aplicación
 ```bash
-# Consulta con tu departamento IT de UPV:
-# - ¿Usáis Office365?
-# - ¿Tenéis servidor SMTP interno?
-# - ¿Cuáles son las credenciales para aplicaciones?
+# Tu aplicación detectará automáticamente los nuevos proveedores
+sudo systemctl restart teamlens-backend
 ```
 
-### 2. Configurar Variables de Entorno
-
-**Para DESARROLLO** (`.env-dev`):
+### Paso 4: Verificar Logs
 ```bash
-# Mantener Gmail para desarrollo
-EMAIL_USER="teamlens.app@gmail.com"
-EMAIL_PASSWORD="wobx oabi gxiw nlco"
-
-# Agregar UPV para pruebas
-OUTLOOK_EMAIL="tu-email-test@upv.es"
-OUTLOOK_PASSWORD="tu-password-test"
+# Deberías ver en los logs:
+# "📧 [EmailService] Proveedores configurados: X"
+# "✅ [EmailService] Usando SMTP UPV para dominio upv.es"
 ```
 
-**Para PRODUCCIÓN** (`.env.production`):
-```bash
-# Configuración completa UPV
-NODE_ENV="production"
-FRONTEND_URL="https://teamlens.upv.es"
+## 🧪 Testing en Desarrollo
 
-# Proveedor principal UPV
+Para probar localmente antes de producción:
+
+```bash
+# En .env-dev, agrega las mismas variables
+# Luego ejecuta el script de pruebas:
+node test-upv-email-config.js
+```
+
+## ⚡ Impacto Inmediato
+
+- **Tiempo implementación**: 15 minutos (solo configuración)
+- **Riesgo**: MÍNIMO (sin cambios de código)
+- **Beneficio**: Hasta 10,000 emails UPV/día vs 500 Gmail
+- **Rollback**: Instantáneo (comentar variables)
+
+## 🛡️ Plan de Despliegue Seguro
+
+1. **Desarrollo**: Probar con credenciales de test
+2. **Logs**: Verificar que detecta nuevos proveedores
+3. **Producción**: Agregar variables y reiniciar
+4. **Monitoreo**: Verificar logs de selección de proveedor
+5. **Rollback**: Si hay problemas, comentar variables UPV
+
+## 📊 Variables de Entorno Completas
+
+```bash
+# ===== CONFIGURACIÓN ACTUAL (Gmail) =====
+EMAIL_USER="tu-gmail@gmail.com"
+EMAIL_PASSWORD="tu-app-password"
+EMAIL_FROM="tu-gmail@gmail.com"
+
+# ===== NUEVA CONFIGURACIÓN UPV =====
+
+# Opción 1: Office365 (RECOMENDADO)
 OUTLOOK_EMAIL="teamlens@upv.es"
-OUTLOOK_PASSWORD="password-seguro-institucional"
-OUTLOOK_FROM="TeamLens UPV <noreply@upv.es>"
+OUTLOOK_PASSWORD="password-de-aplicacion"
+OUTLOOK_FROM="noreply-teamlens@upv.es"
 
-# Backup Gmail (opcional)
-EMAIL_USER="teamlens.backup@gmail.com"
-EMAIL_PASSWORD="backup-password"
+# Opción 2: SMTP UPV Directo (ALTERNATIVO)
+UPV_SMTP_HOST="smtp.upv.es"
+UPV_SMTP_PORT="587"
+UPV_SMTP_SECURE="false"
+UPV_SMTP_REQUIRE_TLS="true"
+UPV_SMTP_USER="teamlens@upv.es"
+UPV_SMTP_PASSWORD="password-institucional"
+UPV_SMTP_FROM="noreply-teamlens@upv.es"
+UPV_SMTP_DAILY_LIMIT="5000"
+
+# ===== OTRAS CONFIGURACIONES =====
+FRONTEND_URL="https://tu-dominio.upv.es"
+NODE_ENV="production"
 ```
 
-### 3. Verificar la Configuración
+## ❓ FAQs
 
-El sistema incluye logs detallados para debugging:
+**Q: ¿Necesito cambiar código?**
+A: ¡NO! Tu sistema ya soporta UPV completamente.
 
-```typescript
-// Al iniciar el sistema, verás:
-📧 [EmailService] Inicializando servicio de email multiproveedor v3.0...
-📧 [EmailService] Entorno: PRODUCCIÓN
-📧 [EmailService] Proveedores configurados: 3
-  1. Outlook/Office365 (smtp.office365.com)
-  2. Gmail Principal (smtp.gmail.com)
-  3. SendGrid (smtp.sendgrid.net)
-```
+**Q: ¿Qué pasa si no configuro UPV?**
+A: Seguirá funcionando con Gmail como ahora.
 
-### 4. Probar Envío a Dominios UPV
+**Q: ¿Puedo tener Gmail Y UPV?**
+A: ¡SÍ! El sistema usará UPV para @upv.es y Gmail para otros dominios.
 
-```typescript
-// Al enviar a un email UPV, verás:
-🎯 [EmailService] Usando Outlook/Office365 para dominio upv.es
-📤 [EmailService] Enviando email con Outlook/Office365...
-✅ [EmailService] Email enviado exitosamente con Outlook/Office365!
-```
+**Q: ¿Cómo sé que funciona?**
+A: Los logs mostrarán "Usando SMTP UPV para dominio upv.es".
 
----
+## 🆘 Troubleshooting
 
-## 🛡️ Estrategia de Despliegue Seguro
+| Problema | Causa | Solución |
+|----------|-------|----------|
+| No detecta proveedores UPV | Variables mal escritas | Verificar nombres exactos |
+| Emails UPV fallan | Credenciales incorrectas | Verificar con IT UPV |
+| Sigue usando Gmail | Variables no cargadas | Reiniciar aplicación |
 
-### Fase 1: Testing en Desarrollo
-1. Configurar UPV en `.env-dev`
-2. Probar con emails UPV reales
-3. Verificar logs de priorización
-4. Confirmar recepción de emails
+## 🎉 Conclusión
 
-### Fase 2: Despliegue Staging
-1. Configurar ambiente de staging
-2. Probar con volumen real de emails
-3. Monitorear límites diarios
-4. Validar fallbacks
+**¡Tu equipo hizo un trabajo excepcional!** Tienes un sistema enterprise que ya maneja todo esto automáticamente. Solo necesitas "encender" las capacidades UPV que ya están built-in.
 
-### Fase 3: Producción
-1. Configurar `.env.production`
-2. Despliegue gradual
-3. Monitoreo continuo de logs
-4. Plan de rollback preparado
-
----
-
-## 📊 Monitoreo y Estadísticas
-
-Tu sistema incluye un endpoint para monitorear proveedores:
-
-```typescript
-// Endpoint disponible:
-GET /api/email/stats
-
-// Respuesta ejemplo:
-{
-  "providers": [
-    {
-      "name": "Outlook/Office365",
-      "host": "smtp.office365.com",
-      "sentToday": 45,
-      "dailyLimit": 10000,
-      "remaining": 9955,
-      "lastReset": "2024-01-15T00:00:00.000Z"
-    }
-  ]
-}
-```
-
----
-
-## 🔧 Resolución de Problemas Comunes
-
-### Problema: "Solo funciona con Gmail"
-**Causa:** Variables UPV no configuradas
-**Solución:** Configurar `OUTLOOK_EMAIL` y `OUTLOOK_PASSWORD`
-
-### Problema: "Autenticación fallida"
-**Causa:** Credenciales incorrectas o 2FA
-**Solución:** Verificar credenciales y configurar app password
-
-### Problema: "Límite alcanzado"
-**Causa:** Proveedor agotó límite diario
-**Solución:** El sistema rotará automáticamente al siguiente
-
-### Problema: "Emails no llegan a UPV"
-**Causa:** Filtros de spam o configuración SMTP
-**Solución:** Verificar configuración TLS y certificados
-
----
-
-## 📈 Beneficios Empresariales del Sistema Actual
-
-### Escalabilidad
-- ✅ Soporte para múltiples proveedores
-- ✅ Rotación automática
-- ✅ Límites configurables por proveedor
-
-### Confiabilidad
-- ✅ Fallback automático
-- ✅ Reintentos con diferentes proveedores
-- ✅ Logging detallado para debugging
-
-### Profesionalismo
-- ✅ Templates HTML corporativos
-- ✅ Branding consistente
-- ✅ Comunicación unificada
-
----
-
-## 🎯 Próximos Pasos Inmediatos
-
-1. **CONTACTAR IT UPV** - Obtener credenciales SMTP oficiales
-2. **CONFIGURAR VARIABLES** - Agregar configuración UPV a `.env.production`
-3. **PROBAR EN DESARROLLO** - Validar funcionamiento antes de producción
-4. **MONITOREAR LOGS** - Verificar selección automática de proveedores
-5. **DOCUMENTAR PROCESO** - Crear runbook para el equipo
-
----
-
-## 🚨 Importante para Producción
-
-**NUNCA cambies el código existente** - el sistema ya funciona perfectamente. Solo necesitas:
-
-1. ✅ Configurar variables de entorno UPV
-2. ✅ Obtener credenciales institucionales
-3. ✅ Monitorear logs de funcionamiento
-4. ✅ Mantener Gmail como backup
-
-**Tu sistema ya es enterprise-grade y soporta UPV nativamente.**
-
----
-
-*Documentación generada para TeamLens UPV Email Support*
-*Fecha: 2024-01-15*
+**Próximo paso**: Contactar IT UPV para credenciales → 15 minutos de configuración → ¡Listo!

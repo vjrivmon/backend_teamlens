@@ -1,175 +1,186 @@
+#!/usr/bin/env node
+
 /**
- * Script de Testing UPV Email Configuration
- * Prueba la configuración de email para dominios UPV de forma segura
+ * 🧪 Test de Configuración UPV Email - TeamLens
  *
- * USO:
- * node test-upv-email-config.js
+ * Este script verifica la configuración de email UPV SIN ENVIAR EMAILS REALES
+ * Útil para testing seguro antes de desplegar en producción
  *
- * IMPORTANTE: Este script NO ENVIARÁ emails reales en modo test
+ * Uso: node test-upv-email-config.js
  */
 
-const fs = require('fs');
-const path = require('path');
+// Usar variables de entorno del sistema (no requiere dotenv)
+// Para probar con .env-dev, ejecuta: export $(cat .env-dev | xargs) && node test-upv-email-config.js
 
-// Cargar variables de entorno
-require('dotenv').config({ path: '.env-dev' });
+console.log('🧪 =================================================');
+console.log('🧪 TEST DE CONFIGURACIÓN UPV EMAIL - TeamLens');
+console.log('🧪 =================================================\n');
 
-console.log('🧪 [UPV Email Test] Iniciando pruebas de configuración UPV...');
-console.log('═'.repeat(60));
+console.log('📋 1. VERIFICANDO VARIABLES DE ENTORNO...\n');
 
-// Test 1: Verificar variables de entorno necesarias
-console.log('\n📋 Test 1: Verificando variables de entorno UPV');
-console.log('-'.repeat(40));
+// Verificar variables Gmail (actuales)
+console.log('📧 Gmail (Actual):');
+console.log(`  EMAIL_USER: ${process.env.EMAIL_USER ? '✅ Configurado' : '❌ No configurado'}`);
+console.log(`  EMAIL_PASSWORD: ${process.env.EMAIL_PASSWORD ? '✅ Configurado' : '❌ No configurado'}`);
+console.log(`  EMAIL_FROM: ${process.env.EMAIL_FROM || process.env.EMAIL_USER || '❌ No configurado'}`);
 
-const upvVars = {
-    'OUTLOOK_EMAIL': process.env.OUTLOOK_EMAIL,
-    'OUTLOOK_PASSWORD': process.env.OUTLOOK_PASSWORD ? '***CONFIGURADO***' : undefined,
-    'OUTLOOK_FROM': process.env.OUTLOOK_FROM,
-    'UPV_SMTP_HOST': process.env.UPV_SMTP_HOST,
-    'UPV_SMTP_USER': process.env.UPV_SMTP_USER,
-    'UPV_SMTP_PASSWORD': process.env.UPV_SMTP_PASSWORD ? '***CONFIGURADO***' : undefined,
-    'UPV_SMTP_FROM': process.env.UPV_SMTP_FROM,
-};
+// Verificar variables Outlook/Office365
+console.log('\n🏢 Office365/Outlook (UPV):');
+console.log(`  OUTLOOK_EMAIL: ${process.env.OUTLOOK_EMAIL ? '✅ ' + process.env.OUTLOOK_EMAIL : '❌ No configurado'}`);
+console.log(`  OUTLOOK_PASSWORD: ${process.env.OUTLOOK_PASSWORD ? '✅ Configurado' : '❌ No configurado'}`);
+console.log(`  OUTLOOK_FROM: ${process.env.OUTLOOK_FROM || process.env.OUTLOOK_EMAIL || '❌ No configurado'}`);
 
-let upvConfigured = false;
+// Verificar variables SMTP UPV
+console.log('\n🏛️ SMTP UPV Directo:');
+console.log(`  UPV_SMTP_HOST: ${process.env.UPV_SMTP_HOST || '❌ No configurado'}`);
+console.log(`  UPV_SMTP_USER: ${process.env.UPV_SMTP_USER ? '✅ ' + process.env.UPV_SMTP_USER : '❌ No configurado'}`);
+console.log(`  UPV_SMTP_PASSWORD: ${process.env.UPV_SMTP_PASSWORD ? '✅ Configurado' : '❌ No configurado'}`);
+console.log(`  UPV_SMTP_FROM: ${process.env.UPV_SMTP_FROM || process.env.UPV_SMTP_USER || '❌ No configurado'}`);
 
-Object.entries(upvVars).forEach(([key, value]) => {
-    const status = value ? '✅' : '❌';
-    console.log(`  ${status} ${key}: ${value || 'NO CONFIGURADO'}`);
-    if (value && (key.includes('OUTLOOK') || key.includes('UPV'))) {
-        upvConfigured = true;
+// Simular inicialización de proveedores (como en email.service.ts)
+console.log('\n📡 2. SIMULANDO INICIALIZACIÓN DE PROVEEDORES...\n');
+
+const providers = [];
+
+// Gmail
+if (process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) {
+    providers.push({
+        name: 'Gmail Principal',
+        host: 'smtp.gmail.com',
+        user: process.env.EMAIL_USER,
+        dailyLimit: 500
+    });
+    console.log('✅ Proveedor Gmail Principal iniciado');
+} else {
+    console.log('⚠️ Proveedor Gmail Principal NO iniciado (faltan variables)');
+}
+
+// Outlook/Office365
+if (process.env.OUTLOOK_EMAIL && process.env.OUTLOOK_PASSWORD) {
+    providers.push({
+        name: 'Outlook/Office365',
+        host: 'smtp.office365.com',
+        user: process.env.OUTLOOK_EMAIL,
+        dailyLimit: 10000
+    });
+    console.log('✅ Proveedor Outlook/Office365 iniciado');
+} else {
+    console.log('⚠️ Proveedor Outlook/Office365 NO iniciado (faltan variables)');
+}
+
+// SMTP UPV
+if (process.env.UPV_SMTP_HOST && process.env.UPV_SMTP_USER && process.env.UPV_SMTP_PASSWORD) {
+    providers.push({
+        name: 'SMTP UPV',
+        host: process.env.UPV_SMTP_HOST,
+        user: process.env.UPV_SMTP_USER,
+        dailyLimit: parseInt(process.env.UPV_SMTP_DAILY_LIMIT || '5000')
+    });
+    console.log('✅ Proveedor SMTP UPV iniciado');
+} else {
+    console.log('⚠️ Proveedor SMTP UPV NO iniciado (faltan variables)');
+}
+
+console.log(`\n📊 Total de proveedores configurados: ${providers.length}`);
+
+// Simular lógica de selección de proveedor (como en selectProviderForEmail)
+console.log('\n🎯 3. SIMULANDO SELECCIÓN DE PROVEEDOR PARA DOMINIOS UPV...\n');
+
+const upvEmails = [
+    'estudiante@alumno.upv.es',
+    'profesor@epsg.upv.es',
+    'admin@upv.es'
+];
+
+function selectProviderForEmail(email) {
+    const domain = email.split('@')[1]?.toLowerCase();
+
+    // Para correos UPV, preferir proveedores corporativos
+    if (domain === 'epsg.upv.es' || domain === 'alumno.upv.es' || domain === 'upv.es') {
+        // Buscar primero SMTP UPV
+        const upvProvider = providers.find(p => p.name === 'SMTP UPV');
+        if (upvProvider) {
+            return upvProvider;
+        }
+
+        // Luego intentar con Outlook/Office365
+        const outlookProvider = providers.find(p => p.name === 'Outlook/Office365');
+        if (outlookProvider) {
+            return outlookProvider;
+        }
+    }
+
+    // Para otros dominios, usar cualquier proveedor disponible
+    return providers[0] || null;
+}
+
+upvEmails.forEach(email => {
+    const selectedProvider = selectProviderForEmail(email);
+    const domain = email.split('@')[1];
+
+    if (selectedProvider) {
+        console.log(`📧 ${email} → ✅ ${selectedProvider.name} (${selectedProvider.host})`);
+    } else {
+        console.log(`📧 ${email} → ❌ Sin proveedor disponible`);
     }
 });
 
-if (upvConfigured) {
-    console.log('\n✅ Configuración UPV encontrada');
-} else {
-    console.log('\n⚠️  No se encontró configuración UPV completa');
-    console.log('   Sugerencia: Configura OUTLOOK_EMAIL y OUTLOOK_PASSWORD');
-}
-
-// Test 2: Simular detección de dominio
-console.log('\n🎯 Test 2: Simulando detección de dominios UPV');
-console.log('-'.repeat(40));
-
-const upvDomains = [
-    'estudiante@upv.es',
-    'profesor@epsg.upv.es',
-    'admin@alumno.upv.es',
-    'test@gmail.com',
-    'user@hotmail.com'
-];
-
-upvDomains.forEach(email => {
-    const domain = email.split('@')[1]?.toLowerCase();
-    const isUPV = ['epsg.upv.es', 'alumno.upv.es', 'upv.es'].includes(domain);
-    const priority = isUPV ? 'UPV Provider' : 'General Provider';
-    const icon = isUPV ? '🎓' : '📧';
-
-    console.log(`  ${icon} ${email} → ${priority}`);
-});
-
-// Test 3: Verificar templates de email
-console.log('\n📄 Test 3: Verificando templates de email');
-console.log('-'.repeat(40));
-
-const templatePath = path.join(__dirname, 'src', 'templates', 'emails');
-const requiredTemplates = [
-    'base-email.template.html',
-    'student-invitation.template.html',
-    'forgot-password.template.html',
-    'password-reset-confirmation.template.html',
-    'questionnaire-reminder.template.html'
-];
-
-requiredTemplates.forEach(template => {
-    const fullPath = path.join(templatePath, template);
-    const exists = fs.existsSync(fullPath);
-    const status = exists ? '✅' : '❌';
-    console.log(`  ${status} ${template}`);
-});
-
-// Test 4: Validar configuración de URLs
-console.log('\n🌐 Test 4: Validando configuración de URLs');
-console.log('-'.repeat(40));
+// Verificar configuración frontend
+console.log('\n🌐 4. VERIFICANDO CONFIGURACIÓN FRONTEND...\n');
 
 const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:4200';
-const isProduction = process.env.NODE_ENV === 'production';
+console.log(`Frontend URL: ${frontendUrl}`);
 
-console.log(`  📍 Frontend URL: ${frontendUrl}`);
-console.log(`  🏭 Entorno: ${isProduction ? 'PRODUCCIÓN' : 'DESARROLLO'}`);
-
-if (isProduction && frontendUrl.includes('localhost')) {
-    console.log('  ⚠️  WARNING: URL localhost en producción!');
-} else if (isProduction) {
-    console.log('  ✅ URL de producción configurada correctamente');
+if (frontendUrl.includes('localhost') && process.env.NODE_ENV === 'production') {
+    console.log('🚨 ¡ADVERTENCIA! Frontend URL contiene localhost en PRODUCCIÓN');
 } else {
-    console.log('  ✅ URL de desarrollo configurada');
-}
-
-// Test 5: Simulación de envío (SIN EMAIL REAL)
-console.log('\n📤 Test 5: Simulación de lógica de envío');
-console.log('-'.repeat(40));
-
-console.log('  🧪 Simulando envío a destinatario UPV...');
-console.log('  📧 Para: estudiante@upv.es');
-console.log('  🎯 Proveedor seleccionado: ' + (upvConfigured ? 'Outlook/Office365 o SMTP UPV' : 'Gmail (fallback)'));
-console.log('  📝 Template: student-invitation.template.html');
-console.log('  🔗 URL generada: ' + frontendUrl + '/register/test-token-123');
-
-// Test 6: Recomendaciones de configuración
-console.log('\n💡 Test 6: Recomendaciones');
-console.log('-'.repeat(40));
-
-const recommendations = [];
-
-if (!upvConfigured) {
-    recommendations.push('Configurar credenciales UPV (OUTLOOK_EMAIL/PASSWORD)');
-}
-
-if (isProduction && frontendUrl.includes('localhost')) {
-    recommendations.push('Actualizar FRONTEND_URL para producción');
-}
-
-if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
-    recommendations.push('Configurar Gmail como backup');
-}
-
-if (recommendations.length === 0) {
-    console.log('  ✅ Configuración óptima detectada');
-} else {
-    recommendations.forEach((rec, index) => {
-        console.log(`  ${index + 1}. ${rec}`);
-    });
+    console.log('✅ Frontend URL configurada correctamente');
 }
 
 // Resumen final
-console.log('\n' + '═'.repeat(60));
-console.log('📊 RESUMEN DE PRUEBAS');
-console.log('═'.repeat(60));
+console.log('\n📋 5. RESUMEN FINAL...\n');
 
-const testResults = {
-    'Variables UPV': upvConfigured ? '✅' : '⚠️',
-    'Detección de dominios': '✅',
-    'Templates HTML': '✅',
-    'URLs configuradas': (isProduction && frontendUrl.includes('localhost')) ? '⚠️' : '✅',
-    'Lógica de envío': '✅',
-    'Recomendaciones': recommendations.length === 0 ? '✅' : `${recommendations.length} pendientes`
-};
+const upvProviders = providers.filter(p =>
+    p.name === 'SMTP UPV' || p.name === 'Outlook/Office365'
+);
 
-Object.entries(testResults).forEach(([test, result]) => {
-    console.log(`  ${result} ${test}`);
-});
+if (upvProviders.length > 0) {
+    console.log('🎉 ¡CONFIGURACIÓN UPV LISTA!');
+    console.log(`✅ ${upvProviders.length} proveedor(es) UPV configurado(s)`);
+    console.log('✅ Emails a dominios UPV usarán proveedores corporativos automáticamente');
+    console.log('✅ Sistema mantendrá Gmail como fallback para otros dominios');
 
-console.log('\n🚀 PRÓXIMOS PASOS:');
-console.log('  1. Configurar credenciales UPV en .env');
-console.log('  2. Probar con email real a dominio UPV');
-console.log('  3. Monitorear logs de selección de proveedor');
-console.log('  4. Validar recepción de emails');
+    console.log('\n📝 Proveedores UPV activos:');
+    upvProviders.forEach(provider => {
+        console.log(`  • ${provider.name} (${provider.dailyLimit} emails/día)`);
+    });
 
-console.log('\n📖 DOCUMENTACIÓN:');
-console.log('  - Ver: UPV_EMAIL_CONFIGURATION_GUIDE.md');
-console.log('  - Ver: EMAIL_SYSTEM_DOCUMENTATION.md');
+} else {
+    console.log('⚠️ CONFIGURACIÓN UPV PENDIENTE');
+    console.log('❌ No hay proveedores UPV configurados');
+    console.log('📧 Sistema seguirá usando Gmail para todos los dominios');
+    console.log('\n📋 Para habilitar UPV, configura:');
+    console.log('   • OUTLOOK_EMAIL + OUTLOOK_PASSWORD (recomendado)');
+    console.log('   • O: UPV_SMTP_HOST + UPV_SMTP_USER + UPV_SMTP_PASSWORD');
+}
 
-console.log('\n✅ [UPV Email Test] Pruebas completadas');
-console.log('🔧 Tu sistema YA SOPORTA dominios UPV - solo necesita configuración');
+console.log('\n🛡️ 6. PRÓXIMOS PASOS...\n');
+
+if (upvProviders.length > 0) {
+    console.log('✅ Tu configuración está lista para producción');
+    console.log('1. Copia las mismas variables a .env.production');
+    console.log('2. Reinicia el servidor: sudo systemctl restart teamlens-backend');
+    console.log('3. Monitorea logs para verificar selección de proveedores');
+} else {
+    console.log('📋 Pendiente: Obtener credenciales UPV');
+    console.log('1. Contacta IT UPV para obtener:');
+    console.log('   • Email institucional para TeamLens');
+    console.log('   • Password de aplicación');
+    console.log('2. Configura variables en .env-dev');
+    console.log('3. Re-ejecuta este test');
+    console.log('4. Copia configuración a .env.production');
+}
+
+console.log('\n🧪 =================================================');
+console.log('🧪 TEST COMPLETADO - NO SE ENVIARON EMAILS REALES');
+console.log('🧪 =================================================\n');

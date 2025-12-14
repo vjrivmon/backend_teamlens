@@ -40,12 +40,12 @@ class EmailService {
     constructor() {
         this.isProduction = process.env.NODE_ENV === 'production';
         this.emailConfig = {
-            host: 'smtp.gmail.com',
-            port: 465,
-            secure: true,
+            host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+            port: parseInt(process.env.EMAIL_PORT || '465'),
+            secure: process.env.EMAIL_SECURE !== 'false', // Por defecto true, false solo si explícitamente se indica
             user: process.env.EMAIL_USER || "teamlens.app@gmail.com",
             password: process.env.EMAIL_PASSWORD || "wobx oabi gxiw nlco",
-            from: "teamlens.app@gmail.com"
+            from: process.env.EMAIL_FROM || "teamlens.app@gmail.com"
         };
         
         // Configuración dinámica de URLs basada en variables de entorno

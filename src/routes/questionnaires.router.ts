@@ -4,16 +4,17 @@ import { collections } from "../services/database.service";
 import { webSocketService } from "../services/websocket.service";
 import Questionnaire from "../models/questionnaire";
 import User from "../models/user";
-import { 
+import {
     createAlgorithmFileForActivity,
     validateAllStudentsCompletedBelbin,
     algorithmFileExists,
     handleActivityChange
 } from "../functions/algorithm-functions";
+import { verifyToken } from "../middlewares";
 
 export const questionnairesRouter = express.Router();
 
-questionnairesRouter.get("/", async (_req: Request, res: Response) => {
+questionnairesRouter.get("/", verifyToken, async (_req: Request, res: Response) => {
     try {
         const questionnaires = await collections.questionnaires?.find<Questionnaire[]>({ enabled: true }).toArray();
         res.status(200).send(questionnaires);
@@ -24,7 +25,7 @@ questionnairesRouter.get("/", async (_req: Request, res: Response) => {
     }
 });
 
-questionnairesRouter.get("/asked", async (req: Request, res: Response) => {
+questionnairesRouter.get("/asked", verifyToken, async (req: Request, res: Response) => {
     const authUserId = req.session?.authuser as string;
     
     try {
@@ -63,7 +64,7 @@ questionnairesRouter.get("/:id", async (req: Request, res: Response) => {
     }
 });
 
-questionnairesRouter.post("/", async (req: Request, res: Response) => {
+questionnairesRouter.post("/", verifyToken, async (req: Request, res: Response) => {
     try {
         const newQuestionnaire = req.body as Questionnaire;
         const result = await collections.questionnaires?.insertOne(newQuestionnaire);
@@ -84,7 +85,7 @@ questionnairesRouter.post("/", async (req: Request, res: Response) => {
     }
 });
 
-questionnairesRouter.put("/:id", async (req: Request, res: Response) => {
+questionnairesRouter.put("/:id", verifyToken, async (req: Request, res: Response) => {
     const id = req?.params?.id;
 
     try {
@@ -283,7 +284,7 @@ questionnairesRouter.put("/:id/submit-anonymous", async (req: Request, res: Resp
     }
 });
 
-questionnairesRouter.put("/:id/submit", async (req: Request, res: Response) => {
+questionnairesRouter.put("/:id/submit", verifyToken, async (req: Request, res: Response) => {
     const id = req?.params?.id;
     const authUserId = req.session?.authuser as string;
 
@@ -400,7 +401,7 @@ questionnairesRouter.put("/:id/submit", async (req: Request, res: Response) => {
     }
 });
 
-questionnairesRouter.delete("/:id", async (req: Request, res: Response) => {
+questionnairesRouter.delete("/:id", verifyToken, async (req: Request, res: Response) => {
     const id = req?.params?.id;
 
     try {
@@ -435,7 +436,7 @@ questionnairesRouter.delete("/:id", async (req: Request, res: Response) => {
  * @param {string} activityId - ID de la actividad
  * @returns {Object} Estadísticas de completitud por cuestionario
  */
-questionnairesRouter.get("/activity/:activityId/stats", async (req: Request, res: Response) => {
+questionnairesRouter.get("/activity/:activityId/stats", verifyToken, async (req: Request, res: Response) => {
     const activityId = req?.params?.activityId;
 
     try {

@@ -95,11 +95,21 @@ class WebSocketService {
         // Middleware de autenticación
         this.io.use(async (socket, next) => {
             try {
-                const token = socket.handshake.auth.token || socket.handshake.headers.authorization;
-                
+                let token = socket.handshake.auth.token || socket.handshake.headers.authorization;
+
                 if (!token) {
                     console.log('❌ [WebSocket] Conexión rechazada: Sin token');
                     return next(new Error('Authentication error: No token provided'));
+                }
+
+                // DEBUG: Log token info
+                console.log(`🔐 [WebSocket] Token recibido (primeros 50 chars): ${token.substring(0, 50)}...`);
+                console.log(`🔐 [WebSocket] Token length: ${token.length}`);
+
+                // Si el token tiene prefijo "Bearer ", eliminarlo
+                if (token.startsWith('Bearer ')) {
+                    token = token.slice(7);
+                    console.log(`🔐 [WebSocket] Token sin Bearer prefix`);
                 }
 
                 // Verificar JWT token

@@ -102,11 +102,20 @@ def execute_real_algorithm(data, ordered_student_ids):
                 # Convertir solo si contiene strings
                 if constraint['members'] and isinstance(constraint['members'][0], str):
                     converted_members = []
+                    all_ids_found = True
                     for member_id in constraint['members']:
                         if member_id in id_to_index_map:
                             converted_members.append(id_to_index_map[member_id])
                         else:
-                            print(f"⚠️ ID no encontrado en mapeo: {member_id}", file=sys.stderr)
+                            print(f"⚠️ ID no encontrado en mapeo: {member_id} - omitiendo constraint", file=sys.stderr)
+                            all_ids_found = False
+                            break
+
+                    # Si no se encontraron todos los IDs, omitir este constraint
+                    if not all_ids_found or len(converted_members) == 0:
+                        print(f"   🗑️ Omitiendo constraint {constraint['type']} por IDs inválidos", file=sys.stderr)
+                        continue
+
                     new_constraint['members'] = converted_members
                     print(f"   Convertida: {constraint['members']} -> {new_constraint['members']}", file=sys.stderr)
             

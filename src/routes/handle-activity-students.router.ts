@@ -4,8 +4,9 @@ import Activity from "../models/activity";
 import { collections } from "../services/database.service";
 import { verifyTeacher } from "../middlewares";
 import { webSocketService } from "../services/websocket.service";
+import { emailQueueService, StudentInvitationJob } from "../services/email-queue.service";
 
-import { addUserNotification, createNonRegisteredAccount } from "../functions/user-functions";
+import { addUserNotification, createNonRegisteredAccount, CreateNonRegisteredAccountResult } from "../functions/user-functions";
 
 export const handleActivityStudentsRouter = express.Router({ mergeParams: true });
 
@@ -57,175 +58,77 @@ handleActivityStudentsRouter.post("/", verifyTeacher, async (req: Request, res: 
         console.log(`👥 [ActivityStudents] Usuarios existentes encontrados: ${existingUserEmails.length}`);
         console.log(`📧 [ActivityStudents] Emails existentes:`, existingUserEmails);
 
-        //logica de negocio: si el usuario no existe se crea una cuenta temporal con su email, se le envia un correo para que se registre y se le añade a la actividad     
-        const temporalUsersEmail: string[] = []
-        const emailErrors: string[] = []
-        const emailSuccesses: string[] = []
+        // 🚀 NUEVA LÓGICA: Crear usuarios SIN enviar emails, luego encolar emails
+        const temporalUsersEmail: string[] = [];
+        const emailJobsToQueue: StudentInvitationJob[] = [];
+        const creationErrors: Array<{ email: string; error: string }> = [];
+        const teacherId = req.session?.authuser as string;
 
-        console.log(`🚀 [ActivityStudents] Iniciando procesamiento paralelo de ${emails.length} emails...`);
+        console.log(`🚀 [ActivityStudents] Iniciando creación de usuarios (emails se encolarán después)...`);
 
-        // 🔥 SOLUCIÓN: Procesamiento paralelo con Promise.allSettled para garantizar que todos los emails se procesen
-        const emailProcessingPromises = emails.map(async (email: string, index: number) => {
-            console.log(`🔄 [ActivityStudents] Procesando email ${index + 1}/${emails.length}: ${email}`);
-            
-                         // Si el usuario ya existe, marcarlo como éxito
-             if (existingUserEmails.includes(email)) {
-                 console.log(`✅ [ActivityStudents] Usuario ya existe: ${email}`);
-                 const existingUser = users?.find(user => user.email === email);
-                 return {
-                     email,
-                     status: 'existing',
-                     userId: existingUser?._id
-                 };
-             }
+        // Procesar cada email secuencialmente para crear usuarios
+        for (const email of emails) {
+            // Si el usuario ya existe, saltar
+            if (existingUserEmails.includes(email)) {
+                console.log(`✅ [ActivityStudents] Usuario ya existe: ${email}`);
+                continue;
+            }
 
-            // Usuario no existe - crear cuenta temporal
-            temporalUsersEmail.push(email);
-            console.log(`➕ [ActivityStudents] Creando cuenta temporal para: ${email}`);
-            
             try {
-                console.log(`🔧 [ActivityStudents] Llamando a createNonRegisteredAccount para: ${email}`);
-                const temporalUserId = await createNonRegisteredAccount(email);
-                
-                if (temporalUserId) {
-                    console.log(`✅ [ActivityStudents] Usuario temporal creado exitosamente: ${email} (ID: ${temporalUserId})`);
-                    console.log(`📧 [ActivityStudents] Email de invitación enviado a: ${email}`);
-                    return {
+                console.log(`➕ [ActivityStudents] Creando cuenta temporal para: ${email}`);
+
+                // Crear usuario SIN enviar email (skipEmail: true)
+                const result = await createNonRegisteredAccount(email, { skipEmail: true });
+
+                if (result) {
+                    existingUserIds.push(result.userId);
+                    temporalUsersEmail.push(email);
+
+                    // Preparar job para la cola de emails
+                    emailJobsToQueue.push({
                         email,
-                        status: 'created',
-                        userId: temporalUserId
-                    };
+                        invitationToken: result.invitationToken
+                    });
+
+                    console.log(`✅ [ActivityStudents] Usuario creado: ${email} (email pendiente de encolar)`);
                 } else {
-                    console.error(`❌ [ActivityStudents] No se pudo crear usuario temporal para: ${email}`);
-                    return {
+                    creationErrors.push({
                         email,
-                        status: 'error',
                         error: 'No se pudo crear cuenta temporal'
-                    };
+                    });
                 }
             } catch (error: any) {
-                console.error(`❌ [ActivityStudents] Error creando cuenta temporal para ${email}:`, error);
-                console.error(`❌ [ActivityStudents] Stack trace:`, error.stack);
-                return {
+                console.error(`❌ [ActivityStudents] Error creando ${email}:`, error.message);
+                creationErrors.push({
                     email,
-                    status: 'error',
                     error: error.message
-                };
-            }
-        });
-
-        // Esperar a que TODAS las operaciones de email se completen
-        const emailResults = await Promise.allSettled(emailProcessingPromises);
-
-        // Procesar resultados y construir listas finales
-        emailResults.forEach((result, index) => {
-            const email = emails[index];
-            
-            if (result.status === 'fulfilled') {
-                const data = result.value;
-                
-                if (data.status === 'created' || data.status === 'existing') {
-                    if (data.userId) {
-                        existingUserIds.push(data.userId);
-                    }
-                    emailSuccesses.push(data.email);
-                } else if (data.status === 'error') {
-                    emailErrors.push(`${data.email}: ${data.error}`);
-                }
-            } else {
-                // Promise fue rechazada
-                console.error(`❌ [ActivityStudents] Promise rechazada para ${email}:`, result.reason);
-                emailErrors.push(`${email}: ${result.reason.message || 'Error inesperado'}`);
-            }
-        });
-
-        console.log(`🏁 [ActivityStudents] Procesamiento paralelo completado`);
-        console.log(`   - Promises resueltas: ${emailResults.filter(r => r.status === 'fulfilled').length}/${emailResults.length}`);
-        console.log(`   - Promises rechazadas: ${emailResults.filter(r => r.status === 'rejected').length}/${emailResults.length}`);
-
-        // 🛡️ MANEJO DE ERRORES PARCIALES: Verificar si hay demasiados errores para considerar rollback
-        const successRate = emailSuccesses.length / emails.length;
-        const criticalErrorThreshold = 0.5; // Si menos del 50% tiene éxito, considerar rollback
-        
-        if (successRate < criticalErrorThreshold && temporalUsersEmail.length > 0) {
-            console.warn(`⚠️ [ActivityStudents] Tasa de éxito baja (${Math.round(successRate * 100)}%). Evaluando rollback...`);
-            
-            // Obtener IDs de usuarios temporales creados exitosamente
-            const temporalUserIds: ObjectId[] = [];
-            emailResults.forEach((result, index) => {
-                if (result.status === 'fulfilled' && result.value.status === 'created' && result.value.userId) {
-                    temporalUserIds.push(result.value.userId);
-                }
-            });
-
-            if (temporalUserIds.length > 0) {
-                console.log(`🗑️ [ActivityStudents] Ejecutando rollback para ${temporalUserIds.length} usuarios temporales...`);
-                
-                try {
-                    // Eliminar usuarios temporales creados en esta operación
-                    const rollbackResult = await collections.users?.deleteMany({ 
-                        _id: { $in: temporalUserIds },
-                        isTemporary: true 
-                    });
-                    
-                    console.log(`✅ [ActivityStudents] Rollback ejecutado: ${rollbackResult?.deletedCount} usuarios temporales eliminados`);
-                    
-                    // Limpiar arrays para reflejar el rollback
-                    temporalUsersEmail.length = 0;
-                    emailSuccesses.splice(0);
-                    existingUserIds.splice(0);
-                    
-                    // Mantener solo usuarios existentes
-                    users?.forEach(user => {
-                        if (emails.includes(user.email)) {
-                            existingUserIds.push(user._id);
-                            emailSuccesses.push(user.email);
-                        }
-                    });
-                    
-                    // Añadir todos los emails fallidos a errores
-                    temporalUsersEmail.forEach(email => {
-                        if (!emailErrors.some(error => error.includes(email))) {
-                            emailErrors.push(`${email}: Rollback ejecutado debido a tasa de error alta`);
-                        }
-                    });
-                    
-                    console.log(`🔄 [ActivityStudents] Post-rollback: ${emailSuccesses.length} éxitos, ${emailErrors.length} errores`);
-                    
-                } catch (rollbackError: any) {
-                    console.error(`❌ [ActivityStudents] Error durante rollback:`, rollbackError);
-                    // No fallar la operación principal por errores de rollback
-                }
+                });
             }
         }
 
-        // Log del resumen del proceso con más detalle
-        console.log(`📊 [ActivityStudents] Resumen del procesamiento de emails:`);
+        // Log del resumen del proceso
+        console.log(`📊 [ActivityStudents] Resumen de creación de usuarios:`);
         console.log(`  - Emails procesados: ${emails.length}`);
         console.log(`  - Usuarios existentes: ${existingUserEmails.length}`);
-        console.log(`  - Cuentas temporales intentadas: ${temporalUsersEmail.length}`);
-        console.log(`  - Invitaciones exitosas: ${emailSuccesses.length}`);
-        console.log(`  - Errores de email: ${emailErrors.length}`);
-        console.log(`  - IDs finales de usuarios: ${existingUserIds.length}`);
+        console.log(`  - Usuarios temporales creados: ${temporalUsersEmail.length}`);
+        console.log(`  - Emails a encolar: ${emailJobsToQueue.length}`);
+        console.log(`  - Errores de creación: ${creationErrors.length}`);
+        console.log(`  - IDs totales de usuarios: ${existingUserIds.length}`);
 
-        if (emailErrors.length > 0) {
-            console.error(`❌ [ActivityStudents] Errores en el envío de emails:`, emailErrors);
+        if (creationErrors.length > 0) {
+            console.error(`❌ [ActivityStudents] Errores en creación:`, creationErrors);
         }
 
-        if (emailSuccesses.length > 0) {
-            console.log(`✅ [ActivityStudents] Invitaciones/usuarios procesados exitosamente:`, emailSuccesses);
-        }
-
-        console.log(`👥 [ActivityStudents] IDs de usuarios finales a añadir:`, existingUserIds);
+        console.log(`👥 [ActivityStudents] IDs de usuarios a añadir:`, existingUserIds);
 
         // Verificar que tenemos usuarios para añadir
         if (existingUserIds.length === 0) {
             console.warn(`⚠️ [ActivityStudents] No hay usuarios válidos para añadir a la actividad`);
             res.status(400).send({
                 message: "No se pudieron procesar los emails proporcionados",
-                errors: emailErrors,
+                errors: creationErrors,
                 processedEmails: emails.length,
-                successfulEmails: emailSuccesses.length
+                successfulEmails: temporalUsersEmail.length
             });
             return;
         }
@@ -293,8 +196,8 @@ handleActivityStudentsRouter.post("/", verifyTeacher, async (req: Request, res: 
             description: `Se han añadido ${existingUserIds.length} estudiantes a la actividad`,
             activityId: activityId,
             studentsAdded: existingUserIds.length,
-            emailSuccesses: emailSuccesses.length,
-            emailErrors: emailErrors.length,
+            emailsQueued: emailJobsToQueue.length,
+            creationErrors: creationErrors.length,
             timestamp: new Date().toISOString()
         };
 
@@ -396,18 +299,36 @@ handleActivityStudentsRouter.post("/", verifyTeacher, async (req: Request, res: 
             }
         }
 
+        // 📬 ENCOLAR EMAILS: Después de todas las operaciones exitosas
+        let batchId: string | null = null;
+        if (emailJobsToQueue.length > 0 && result && result.modifiedCount) {
+            console.log(`📬 [ActivityStudents] Encolando ${emailJobsToQueue.length} emails de invitación...`);
+
+            batchId = emailQueueService.enqueueStudentInvitations(
+                emailJobsToQueue,
+                {
+                    activityId,
+                    teacherId,
+                    priority: 'normal'
+                }
+            );
+
+            console.log(`✅ [ActivityStudents] Emails encolados con batchId: ${batchId}`);
+        }
+
         if (result && result.modifiedCount) {
             const responseMessage = {
-                message: `Successfully added students to activity with id ${activityId}`,
+                message: `Estudiantes agregados exitosamente${emailJobsToQueue.length > 0 ? '. Emails de invitación en proceso de envío.' : '.'}`,
                 studentsAdded: existingUserIds.length,
                 existingUsers: existingUserEmails.length,
                 temporalUsers: temporalUsersEmail.length,
-                emailSuccesses: emailSuccesses.length,
-                emailErrors: emailErrors.length,
+                emailsQueued: emailJobsToQueue.length,
+                batchId: batchId,
+                creationErrors: creationErrors.length,
                 details: {
                     existingUsers: existingUserEmails,
-                    temporalUsersCreated: emailSuccesses,
-                    emailErrors: emailErrors
+                    temporalUsersCreated: temporalUsersEmail,
+                    creationErrors: creationErrors
                 }
             };
 
@@ -417,8 +338,24 @@ handleActivityStudentsRouter.post("/", verifyTeacher, async (req: Request, res: 
             console.error(`❌ [ActivityStudents] Error actualizando actividad ${activityId}`);
             res.status(400).send(`Failed added students to activity with id ${activityId}`);
         } else if (result.matchedCount) {
+            // Si no se modificó pero se encontró, los estudiantes ya estaban agregados
+            // Aun así, encolar emails si hay nuevos usuarios
+            if (emailJobsToQueue.length > 0) {
+                console.log(`📬 [ActivityStudents] Encolando ${emailJobsToQueue.length} emails (actividad ya actualizada)...`);
+                batchId = emailQueueService.enqueueStudentInvitations(
+                    emailJobsToQueue,
+                    { activityId, teacherId, priority: 'normal' }
+                );
+            }
+
+            const responseMessage = {
+                message: `Actividad ya actualizada${emailJobsToQueue.length > 0 ? '. Emails de invitación en proceso.' : '.'}`,
+                studentsAdded: existingUserIds.length,
+                emailsQueued: emailJobsToQueue.length,
+                batchId: batchId
+            };
             console.log(`ℹ️  [ActivityStudents] Actividad ${activityId} ya está actualizada`);
-            res.status(304).send(`Activity with id ${activityId} is already up to date`);
+            res.status(200).send(responseMessage);
         } else {
             console.error(`❌ [ActivityStudents] Actividad ${activityId} no encontrada`);
             res.status(404).send(`Activity with id ${activityId} does not exist`);

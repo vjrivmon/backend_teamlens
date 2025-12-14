@@ -26,7 +26,8 @@ async function runAlgorithm() {
         console.log(`📊 [AlgorithmWorker] Estudiantes: ${studentsCount}, ordenados: ${orderedStudentIds?.length || 0}`);
 
         // 1. Buscar archivo JSON generado
-        const jsonFilePath = `/home/gti/teamlens/pyteamformation/instances/activity_${activityId}_belbin.json`;
+        // CORREGIDO: Usar ruta relativa que funciona en local y producción
+        const jsonFilePath = path.join(__dirname, '../../../pyteamformation/instances', `activity_${activityId}_belbin.json`);
         
         if (!fs.existsSync(jsonFilePath)) {
             throw new Error(`Archivo JSON no encontrado: ${jsonFilePath}`);

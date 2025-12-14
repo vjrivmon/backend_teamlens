@@ -7,11 +7,30 @@ import emailService from "../services/email.service";
 import { webSocketService } from "../services/websocket.service";
 
 /**
+ * Resultado de la creación de cuenta temporal
+ */
+export interface CreateNonRegisteredAccountResult {
+    userId: ObjectId;
+    invitationToken: string;
+}
+
+/**
+ * Opciones para la creación de cuenta temporal
+ */
+export interface CreateNonRegisteredAccountOptions {
+    skipEmail?: boolean;  // Si es true, no envía email (para uso con cola de emails)
+}
+
+/**
  * Crea una cuenta temporal para un usuario no registrado y envía invitación por email
  * @param email Email del usuario a invitar
- * @returns ObjectId del usuario creado o undefined si hay error
+ * @param options Opciones de creación (skipEmail para omitir envío de email)
+ * @returns Objeto con userId e invitationToken, o undefined si hay error
  */
-export const createNonRegisteredAccount = async (email: string): Promise<ObjectId | undefined> => {
+export const createNonRegisteredAccount = async (
+    email: string,
+    options?: CreateNonRegisteredAccountOptions
+): Promise<CreateNonRegisteredAccountResult | undefined> => {
     console.log(`👤 [UserFunctions] Iniciando creación de cuenta temporal para: ${email}`);
 
     try {
@@ -69,16 +88,26 @@ export const createNonRegisteredAccount = async (email: string): Promise<ObjectI
 
         console.log(`✅ [UserFunctions] Usuario temporal creado con ID: ${result.insertedId}`);
 
+        // Si se especifica skipEmail, retornar sin enviar email (para uso con cola)
+        if (options?.skipEmail) {
+            console.log(`⏭️ [UserFunctions] Omitiendo envío de email (skipEmail=true) para: ${email}`);
+            console.log(`🎉 [UserFunctions] Usuario creado exitosamente, email será enviado por cola`);
+            return {
+                userId: result.insertedId,
+                invitationToken: invitationToken
+            };
+        }
+
         // Enviar email de invitación usando el nuevo método mejorado
         console.log(`📧 [UserFunctions] Enviando email de invitación...`);
-        
+
         try {
             const emailResult = await emailService.sendStudentInvitation(email, invitationToken);
-            
+
             if (emailResult.success) {
                 console.log(`✅ [UserFunctions] Email de invitación enviado exitosamente a: ${email}`);
                 console.log(`📧 [UserFunctions] Message ID: ${emailResult.messageId}`);
-                
+
                 // Log adicional en desarrollo
                 if (process.env.NODE_ENV !== 'production' && emailResult.debugInfo) {
                     console.log(`🔍 [UserFunctions] Debug info del email:`, emailResult.debugInfo);
@@ -87,7 +116,7 @@ export const createNonRegisteredAccount = async (email: string): Promise<ObjectI
                 // Si el envío falla, eliminar el usuario temporal y lanzar error
                 console.error(`❌ [UserFunctions] Error enviando email de invitación a: ${email}`);
                 console.error(`❌ [UserFunctions] Error: ${emailResult.error}`);
-                
+
                 console.log(`🗑️ [UserFunctions] Eliminando usuario temporal debido a fallo de email...`);
                 await collections.users?.deleteOne({ _id: result.insertedId });
                 throw new Error(`Error enviando email de invitación: ${emailResult.error}`);
@@ -95,14 +124,17 @@ export const createNonRegisteredAccount = async (email: string): Promise<ObjectI
         } catch (emailError: any) {
             // Si hay cualquier error con el email, limpiar y fallar
             console.error(`❌ [UserFunctions] Excepción enviando email a: ${email}`, emailError);
-            
+
             console.log(`🗑️ [UserFunctions] Eliminando usuario temporal debido a excepción de email...`);
             await collections.users?.deleteOne({ _id: result.insertedId });
             throw new Error(`Error crítico enviando email de invitación: ${emailError.message}`);
         }
 
         console.log(`🎉 [UserFunctions] Proceso de invitación completado exitosamente para: ${email}`);
-        return result.insertedId;
+        return {
+            userId: result.insertedId,
+            invitationToken: invitationToken
+        };
 
     } catch (error: any) {
         console.error(`❌ [UserFunctions] Error en createNonRegisteredAccount para ${email}:`, error);

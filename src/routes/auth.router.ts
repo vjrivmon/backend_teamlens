@@ -41,7 +41,8 @@ authRouter.post("/login", async (req: Request, res: Response) => {
         (req.session as any).token = token;
 
         const { password, ...userWithoutPassword } = user;
-        res.status(200).send(userWithoutPassword);
+        // Incluir el token JWT en la respuesta para WebSocket
+        res.status(200).send({ ...userWithoutPassword, token });
 
     } catch (error: any) {
         console.error(error);

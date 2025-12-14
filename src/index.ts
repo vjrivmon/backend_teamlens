@@ -76,7 +76,7 @@ connectToDatabase()
         // Routers con autenticación
         app.use("/users", verifyToken, usersRouter);
         app.use("/activities", verifyToken, activitiesRouter);
-        app.use("/questionnaires", verifyToken, questionnairesRouter);
+        app.use("/questionnaires", questionnairesRouter); // verifyToken aplicado selectivamente en el router
         app.use("/auth", authRouter);
 
         // ============================================================================
@@ -98,8 +98,9 @@ connectToDatabase()
             console.log(`🎯 [SPA] Sirviendo archivos estáticos desde: ${angularDistPath}`);
             
             // Verificar que el directorio existe
+            let foundPath = null;
+            const fs = require('fs');
             try {
-                const fs = require('fs');
                 if (!fs.existsSync(angularDistPath)) {
                     console.log(`⚠️ [SPA] Directorio no encontrado: ${angularDistPath}`);
                     console.log(`🔍 [SPA] __dirname actual: ${__dirname}`);
@@ -112,7 +113,6 @@ connectToDatabase()
                         '/home/gti/teamlens/frontend_build'
                     ];
                     
-                    let foundPath = null;
                     for (const altPath of alternativePaths) {
                         if (fs.existsSync(altPath)) {
                             console.log(`✅ [SPA] Directorio encontrado en path alternativo: ${altPath}`);
@@ -123,15 +123,11 @@ connectToDatabase()
                         }
                     }
                     
-                    if (!foundPath) {
-                        console.log(`⚠️ [SPA] SPA fallback desactivado - frontend no disponible`);
-                        console.log(`🚧 [SPA] Funcionando solo con Nginx proxy`);
-                        return;
-                    } else {
+                    if (foundPath) {
                         // Usar el path encontrado
                         angularDistPath = foundPath;
                         console.log(`🔄 [SPA] Usando path corregido: ${angularDistPath}`);
-                        
+
                         app.use(express.static(angularDistPath, {
                             maxAge: '1h',
                             etag: true,
@@ -151,10 +147,10 @@ connectToDatabase()
                 }
             } catch (error) {
                 console.error(`❌ [SPA] Error verificando directorio:`, error);
-                return;
             }
             
-            // ⚡ Fallback para rutas SPA - Enviar index.html para rutas no-API
+            // ⚡ Fallback para rutas SPA - Enviar index.html para rutas no-API (solo si frontend disponible)
+            if (foundPath || fs.existsSync(angularDistPath)) {
             app.get('*', (req, res, next) => {
                 console.log(`🔍 [SPA] Evaluando ruta: ${req.path}`);
                 console.log(`🔍 [SPA] Headers: Accept=${req.headers.accept}`);
@@ -202,6 +198,7 @@ connectToDatabase()
             });
             
             console.log(`✅ [SPA] Configuración SPA activada - Sirviendo Angular desde Express`);
+            }
         } else {
             console.log(`🚧 [SPA] SPA fallback desactivado`);
         }

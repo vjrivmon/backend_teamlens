@@ -145,7 +145,7 @@ groupsRouter.get("/:id", verifyToken, async (req: Request, res: Response) => {
     }
 });
 
-groupsRouter.post("/", verifyTeacher, async (req: Request, res: Response) => {
+groupsRouter.post("/", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
 
     const { activityId } = req?.params;
 
@@ -184,7 +184,7 @@ groupsRouter.post("/", verifyTeacher, async (req: Request, res: Response) => {
     }
 });
 
-groupsRouter.put("/:id", verifyTeacher, async (req: Request, res: Response) => {
+groupsRouter.put("/:id", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
 
     const { id } = req?.params;
 
@@ -217,7 +217,7 @@ groupsRouter.put("/:id", verifyTeacher, async (req: Request, res: Response) => {
     }
 });
 
-groupsRouter.delete("/:id", verifyTeacher, async (req: Request, res: Response) => {
+groupsRouter.delete("/:id", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
 
     const { id } = req?.params;
 

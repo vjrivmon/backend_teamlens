@@ -7,6 +7,7 @@ import { Request, Response, Router } from "express";
 import { ObjectId } from "mongodb";
 import { collections } from "../services/database.service";
 import verifyTeacher from "../middlewares/verify-teacher";
+import verifyToken from "../middlewares/verify-token";
 import { celeryService } from "../services/celery.service";
 import { addUserNotification } from "../functions/user-functions";
 import { logger } from "../middlewares/logger";
@@ -29,7 +30,7 @@ export const activitiesCeleryRouter = Router();
  * @param {Object} req.body - Datos del algoritmo desde el frontend
  * @returns {Object} Respuesta inmediata con task_id para tracking asíncrono
  */
-activitiesCeleryRouter.post("/:id/algorithm/execute-celery", verifyTeacher, async (req: Request, res: Response) => {
+activitiesCeleryRouter.post("/:id/algorithm/execute-celery", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
     const activityId = req?.params?.id;
     const frontendData = req?.body;
     const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -439,7 +440,7 @@ activitiesCeleryRouter.post("/:id/algorithm/execute-celery", verifyTeacher, asyn
  * Endpoint para obtener el estado de una tarea del algoritmo
  * @route GET /activities/:id/algorithm/status/:taskId
  */
-activitiesCeleryRouter.get("/:id/algorithm/status/:taskId", verifyTeacher, async (req: Request, res: Response) => {
+activitiesCeleryRouter.get("/:id/algorithm/status/:taskId", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
     const { id: activityId, taskId } = req.params;
     
     try {

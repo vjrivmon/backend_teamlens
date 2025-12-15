@@ -8,7 +8,7 @@ import Activity, { AlgorithmConfig } from "../models/activity";
 import { groupsRouter } from "./groups.router";
 import { handleActivityStudentsRouter } from "./handle-activity-students.router";
 import { createGroup, deleteGroup, confirmGroupsAndNotify } from "../functions/group-functions";
-import { verifyTeacher } from "../middlewares";
+import { verifyTeacher, verifyToken } from "../middlewares";
 
 import { Worker } from 'worker_threads';
 import path from 'path';
@@ -114,7 +114,7 @@ activitiesRouter.post("/", async (req: Request, res: Response) => {
     }
 });
 
-activitiesRouter.put("/:id", verifyTeacher, async (req: Request, res: Response) => {
+activitiesRouter.put("/:id", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
 
     const id = req?.params?.id;
 
@@ -151,7 +151,7 @@ activitiesRouter.put("/:id", verifyTeacher, async (req: Request, res: Response) 
     }
 });
 
-activitiesRouter.delete("/:id", verifyTeacher, async (req: Request, res: Response) => {
+activitiesRouter.delete("/:id", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
 
     const id = req?.params?.id;
 
@@ -203,7 +203,7 @@ activitiesRouter.delete("/:id", verifyTeacher, async (req: Request, res: Respons
  * @body {AlgorithmConfig} Configuración del algoritmo
  * @returns {Object} Resultado de la configuración
  */
-activitiesRouter.put("/:id/algorithm/config", verifyTeacher, async (req: Request, res: Response) => {
+activitiesRouter.put("/:id/algorithm/config", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
     const activityId = req?.params?.id;
     const algorithmConfig: AlgorithmConfig = req.body;
 
@@ -400,11 +400,11 @@ activitiesRouter.put("/:id/algorithm/config", verifyTeacher, async (req: Request
  * @param {string} id - ID de la actividad
  * @returns {Object} Configuración actual del algoritmo
  */
-activitiesRouter.get("/:id/algorithm/config", verifyTeacher, async (req: Request, res: Response) => {
+activitiesRouter.get("/:id/algorithm/config", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
     const activityId = req?.params?.id;
 
     try {
-        const activity = await collections.activities?.findOne({ 
+        const activity = await collections.activities?.findOne({
             _id: new ObjectId(activityId),
             teacher: new ObjectId(req.session?.authuser as string)
         });
@@ -454,7 +454,7 @@ activitiesRouter.get("/:id/algorithm/config", verifyTeacher, async (req: Request
  * @param {string} id - ID de la actividad
  * @returns {ValidationResult} Estado de validación detallado con recomendaciones
  */
-activitiesRouter.get("/:id/algorithm/validation", verifyTeacher, async (req: Request, res: Response) => {
+activitiesRouter.get("/:id/algorithm/validation", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
     const activityId = req?.params?.id;
 
     console.log(`🔍 [AlgorithmValidation] Iniciando validación completa para actividad: ${activityId}`);
@@ -517,7 +517,7 @@ const taskQueue: any[] = [];
  * @param {Object} req.body - Datos del algoritmo desde el frontend
  * @returns {Object} Resultado completo del algoritmo una vez terminado
  */
-activitiesRouter.post("/:id/algorithm/execute", verifyTeacher, async (req: Request, res: Response) => {
+activitiesRouter.post("/:id/algorithm/execute", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
     const activityId = req?.params?.id;
     const frontendData = req?.body;
 
@@ -984,7 +984,7 @@ activitiesRouter.post("/:id/algorithm/execute", verifyTeacher, async (req: Reque
  * Endpoint legado para compatibilidad con el sistema anterior
  * @deprecated Usar /algorithm/execute en su lugar
  */
-activitiesRouter.post("/:id/create-algorithm", verifyTeacher, async (req: Request, res: Response) => {
+activitiesRouter.post("/:id/create-algorithm", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
     console.log(`⚠️ [DeprecatedEndpoint] Uso de endpoint legado /create-algorithm para actividad: ${req.params.id}`);
     
     // Devolver mensaje de deprecación indicando el nuevo endpoint
@@ -1631,7 +1631,7 @@ activitiesRouter.use("/:activityId/students", handleActivityStudentsRouter);
  * @param {string} id - ID de la actividad
  * @returns {Object} Preview de la formación de equipos
  */
-activitiesRouter.get("/:id/algorithm/preview", verifyTeacher, async (req: Request, res: Response) => {
+activitiesRouter.get("/:id/algorithm/preview", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
     const activityId = req?.params?.id;
 
     console.log(`👁️ [AlgorithmPreview] Generando preview para actividad: ${activityId}`);
@@ -2049,7 +2049,7 @@ activitiesRouter.get("/:id/debug-no-auth", async (req: Request, res: Response) =
  * @param {string} id - ID de la actividad
  * @returns {Object} Información detallada de debugging
  */
-activitiesRouter.get("/:id/debug", verifyTeacher, async (req: Request, res: Response) => {
+activitiesRouter.get("/:id/debug", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
     const activityId = req?.params?.id;
 
     console.log(`🐛 [Debug] Iniciando debugging para actividad: ${activityId}`);
@@ -2210,7 +2210,7 @@ activitiesRouter.get("/:id/debug", verifyTeacher, async (req: Request, res: Resp
  * @param {string} id - ID de la actividad
  * @returns {Object} Resultado del testing
  */
-activitiesRouter.post("/:id/test-create-groups", verifyTeacher, async (req: Request, res: Response) => {
+activitiesRouter.post("/:id/test-create-groups", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
     const activityId = req?.params?.id;
 
     console.log(`🧪 [TestCreateGroups] ==========================================`);
@@ -2831,7 +2831,7 @@ activitiesRouter.post("/:id/refresh-belbin-status", async (req: Request, res: Re
  * POST /api/activities/:id/groups/confirm
  * Esta ruta se ejecuta cuando el profesor aprueba los grupos del algoritmo
  */
-activitiesRouter.post("/:id/groups/confirm", verifyTeacher, async (req: Request, res: Response) => {
+activitiesRouter.post("/:id/groups/confirm", verifyToken, verifyTeacher, async (req: Request, res: Response) => {
     const activityId = req.params.id;
     const teacherId = req.session?.authuser as string;
     const { groupIds } = req.body; // Opcional: IDs específicos de grupos a confirmar
